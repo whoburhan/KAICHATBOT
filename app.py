@@ -6,6 +6,7 @@ import io
 import requests
 from PIL import Image
 import json
+import concurrent.futures
 
 load_dotenv()
 
@@ -84,7 +85,7 @@ def handle_authentication():
         st.markdown("<div style='text-align: center;'>Or</div>", unsafe_allow_html=True)
         if st.button("Continue as Guest"):
             st.session_state.user = {"uid": "guest", "name": None, "email": "", "picture": ""}
-            st.session_state.chat_history = [("assistant", "👋 Hey there! I'm KAI. What should I call you?")]
+            st.session_state.chat_history = [("assistant", "\U0001F44B Hey there! I'm KAI. What should I call you?")]
             st.session_state.awaiting_name = True
             st.rerun()
 
@@ -101,7 +102,7 @@ def show_sidebar():
                 del st.session_state[key]
             st.rerun()
         uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
-        if uploaded_file and "uploaded_file_data" not in st.session_state:
+        if uploaded_file:
             st.session_state.uploaded_file_data = uploaded_file
             st.session_state.image_processed = False
 
@@ -128,63 +129,43 @@ def message_input():
             st.session_state.chat_history.append(("user", prompt))
             process_user_input(prompt)
 
+def generate_reply_safely(parts):
+    try:
+        return model.generate_content({"role": "user", "parts": parts})
+    except Exception:
+        return None
 
 def process_user_input(prompt):
     try:
-        # Only keep the last few turns for context to avoid overload
-        recent_context = st.session_state.chat_history[-10:]
-        parts = [prompt]
-
-        # Add image if it's uploaded and not processed yet
         image = st.session_state.get("uploaded_file_data", None)
+        parts = [prompt]
         if image and not st.session_state.get("image_processed"):
-            try:
-                img = Image.open(image)
-                buf = io.BytesIO()
-                img.save(buf, format="JPEG")
-                image_data = {
-                    "inline_data": {
-                        "mime_type": "image/jpeg",
-                        "data": base64.b64encode(buf.getvalue()).decode(),
-                    }
+            img = Image.open(image)
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG")
+            image_data = {
+                "inline_data": {
+                    "mime_type": "image/jpeg",
+                    "data": base64.b64encode(buf.getvalue()).decode(),
                 }
-                parts.append(image_data)
-                st.session_state.image_processed = True
-            except Exception as e:
-                st.session_state.chat_history.append(("assistant", f"🛠️ Couldn't read the image. Error: {e}"))
-                st.rerun()
+            }
+            parts.append(image_data)
+            st.session_state.image_processed = True
 
-        # Create Gemini-friendly history format
-        history_for_model = []
-        for role, msg in recent_context:
-            history_for_model.append({
-                "role": "user" if role == "user" else "model",
-                "parts": [msg]
-            })
-
-        # Add new message
-        history_for_model.append({
-            "role": "user",
-            "parts": parts
-        })
-
-        # Call Gemini
         with st.spinner("KAI is thinking..."):
-            try:
-                res = model.generate_content(history_for_model)
-                reply = res.text
-            except Exception as e:
-                reply = f"⚠️ Something broke while thinking: {e}"
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(generate_reply_safely, parts)
+                try:
+                    res = future.result(timeout=30)
+                    reply = res.text if res and res.text else "Hmm... that one slipped past me. Mind rephrasing it?"
+                except concurrent.futures.TimeoutError:
+                    reply = "I was deep in thought and lost track of time. Can you ask that again?"
 
-        # Personalize reply
-        name = st.session_state.user.get("name", "")
+        name = st.session_state.user.get("name")
         if name:
             reply = reply.replace("you", name)
-
-        # Add to history
         st.session_state.chat_history.append(("assistant", reply))
 
-        # Save to Firebase if signed in
         if st.session_state.user["uid"] != "guest":
             db = setup_firebase()
             db.collection("users").document(st.session_state.user["uid"]).set({
@@ -192,9 +173,8 @@ def process_user_input(prompt):
             }, merge=True)
 
         st.rerun()
-
     except Exception as e:
-        st.session_state.chat_history.append(("assistant", f"💥 Crash report: {e}"))
+        st.session_state.chat_history.append(("assistant", f"Oops, that hit a wall: {e}"))
         st.rerun()
 
 def main():
