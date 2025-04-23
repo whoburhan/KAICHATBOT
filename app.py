@@ -5,13 +5,14 @@ from dotenv import load_dotenv
 import io
 import requests
 from PIL import Image
+import json
 
 load_dotenv()
 
 import firebase_admin
 from firebase_admin import credentials, firestore
 import google.generativeai as genai
-import json
+
 # Initialize Firebase
 def setup_firebase():
     try:
@@ -22,7 +23,6 @@ def setup_firebase():
         cred = credentials.Certificate(cert_dict)
         firebase_admin.initialize_app(cred)
     return firestore.client()
-
 
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 model = genai.GenerativeModel("gemini-1.5-flash")
@@ -118,11 +118,16 @@ def chat_interface():
 def message_input():
     prompt = st.chat_input("Say Hello or anything you want")
     if prompt:
-        if st.session_state.user["uid"] == "guest" and st.session_state.user.get("name") is None:
-            st.session_state.user["name"] = prompt.split()[0].capitalize()
-            st.session_state.awaiting_name = False
-            st.session_state.chat_history.append(("user", prompt))
-            st.session_state.chat_history.append(("assistant", f"Nice to meet you, {st.session_state.user['name']}! I must say, You have a beautiful name. "))
+        if st.session_state.user["uid"] == "guest" and st.session_state.user.get("name") is None and st.session_state.awaiting_name:
+            # Only set name if the message looks like a name (not a greeting)
+            if len(prompt.split()) == 1 and len(prompt) < 20 and not any(word in prompt.lower() for word in ["hi", "hello", "hey"]):
+                st.session_state.user["name"] = prompt.split()[0].capitalize()
+                st.session_state.awaiting_name = False
+                st.session_state.chat_history.append(("user", prompt))
+                st.session_state.chat_history.append(("assistant", f"Nice to meet you, {st.session_state.user['name']}! How can I help you today?"))
+            else:
+                st.session_state.chat_history.append(("user", prompt))
+                st.session_state.chat_history.append(("assistant", "I'd love to know what to call you! Could you tell me your name?"))
             st.rerun()
         else:
             st.session_state.chat_history.append(("user", prompt))
@@ -146,7 +151,7 @@ def process_user_input(prompt):
             st.session_state.image_processed = True
         with st.spinner("KAI is thinking..."):
             res = model.generate_content({"role": "user", "parts": parts})
-            reply = res.text or "Sorry, I didn’t quite get that — wanna rephrase?"
+            reply = res.text or "Sorry, I didn't quite get that — wanna rephrase?"
             name = st.session_state.user.get("name")
             if name:
                 reply = reply.replace("you", name)
