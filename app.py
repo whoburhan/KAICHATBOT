@@ -119,8 +119,7 @@ def chat_interface():
             name = prompt.split()[0].capitalize()
             st.session_state.user['name'] = name
             st.session_state.chat_history.append(("user", prompt))
-            st.session_state.chat_history.append(("assistant", f"Nice to meet you, {name}!
-            How can I assist your study abroad plans?"))
+            st.session_state.chat_history.append(("assistant", f"Nice to meet you, {name}! How can I assist your study abroad plans?"))
         else:
             # Append user
             st.session_state.chat_history.append(("user", prompt))
