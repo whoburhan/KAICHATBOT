@@ -1,0 +1,21 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+      {
+        "name": "Streamlit: Run KAI Chatbot",
+        "type": "python",
+        "request": "launch",
+        "program": "${workspaceFolder}/venv/bin/streamlit",
+        "args": [
+          "run",
+          "${workspaceFolder}/app.py",
+          "--server.port=8501",
+          "--server.sslCertFile=cert.pem",
+          "--server.sslKeyFile=key.pem"
+        ],
+        "envFile": "${workspaceFolder}/.env",
+        "console": "integratedTerminal"
+      }
+    ]
+  }
+  
