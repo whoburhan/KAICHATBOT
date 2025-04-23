@@ -39,7 +39,7 @@ model = genai.GenerativeModel("gemini-1.5-flash")
 # -----------------------------------
 # Google Auth URL
 # -----------------------------------
-BASE_URL = "https://yourkai.streamlit.app/"
+BASE_URL = "https://yourkai.streamlit.app"
 
 def get_google_auth_url():
     return (
