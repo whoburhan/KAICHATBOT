@@ -6,14 +6,15 @@ import io
 import requests
 from PIL import Image
 import json
-
-load_dotenv()
-
 import firebase_admin
 from firebase_admin import credentials, firestore
 import google.generativeai as genai
 
-# Initialize Firebase
+# Load env variables
+load_dotenv()
+
+# Firebase init
+
 def setup_firebase():
     try:
         firebase_admin.get_app()
@@ -24,10 +25,13 @@ def setup_firebase():
         firebase_admin.initialize_app(cred)
     return firestore.client()
 
+# Gemini init
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 model = genai.GenerativeModel("gemini-1.5-flash")
 
 BASE_URL = "https://yourkai.streamlit.app"
+
+# Google Auth
 
 def get_google_auth_url():
     return (
@@ -37,6 +41,7 @@ def get_google_auth_url():
         f"scope=email%20profile%20openid&"
         f"response_type=code"
     )
+
 
 def handle_oauth_callback():
     try:
@@ -69,8 +74,11 @@ def handle_oauth_callback():
         st.error("OAuth login failed.")
         st.exception(e)
 
+# UI Parts
+
 def display_logo():
     st.image("Logo_1.png", use_container_width=True)
+
 
 def handle_authentication():
     st.markdown("<style>body {background-color: #090c10;}</style>", unsafe_allow_html=True)
@@ -84,9 +92,11 @@ def handle_authentication():
         st.markdown("<div style='text-align: center;'>Or</div>", unsafe_allow_html=True)
         if st.button("Continue as Guest"):
             st.session_state.user = {"uid": "guest", "name": None, "email": "", "picture": ""}
+            st.session_state.messages = []
             st.session_state.chat_history = [("assistant", "👋 Hey there! I'm KAI. What should I call you?")]
             st.session_state.awaiting_name = True
             st.rerun()
+
 
 def show_sidebar():
     with st.sidebar:
@@ -105,16 +115,19 @@ def show_sidebar():
             st.session_state.uploaded_file_data = uploaded_file
             st.session_state.image_processed = False
 
+
 def chat_interface():
     display_logo()
     st.markdown("<h2 style='margin-top: 0;'>KAI</h2>", unsafe_allow_html=True)
     st.markdown("<style>[data-testid='stChatMessageContent'] > p {font-size: 1.1rem;}</style>", unsafe_allow_html=True)
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = [("assistant", "Hey there! I'm KAI.")]
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
     for role, content in st.session_state.chat_history:
         st.chat_message(role).write(content)
     message_input()
-    process_user_input()  # Trigger immediately
+
 
 def message_input():
     prompt = st.chat_input("Say Hello or anything you want")
@@ -123,49 +136,49 @@ def message_input():
             st.session_state.user["name"] = prompt.split()[0].capitalize()
             st.session_state.awaiting_name = False
             st.session_state.chat_history.append(("user", prompt))
-            st.session_state.chat_history.append(("assistant", f"Nice to meet you, {st.session_state.user['name']}! I must say, You have a beautiful name. "))
+            st.session_state.chat_history.append(("assistant", f"Nice to meet you, {st.session_state.user['name']}! I must say, you have a beautiful name."))
         else:
-            st.session_state.chat_history.append(("user", prompt))
-            st.session_state.last_prompt = prompt
+            process_user_input(prompt)
 
-def process_user_input():
-    try:
-        if "last_prompt" not in st.session_state or not st.session_state.last_prompt:
-            return
 
-        prompt = st.session_state.last_prompt
-        st.session_state.last_prompt = None
-
-        image = st.session_state.get("uploaded_file_data", None)
-        parts = [prompt]
-        if image and not st.session_state.get("image_processed"):
-            img = Image.open(image)
-            buf = io.BytesIO()
-            img.save(buf, format="JPEG")
-            image_data = {
-                "inline_data": {
-                    "mime_type": "image/jpeg",
-                    "data": base64.b64encode(buf.getvalue()).decode(),
-                }
+def process_user_input(prompt):
+    image = st.session_state.get("uploaded_file_data", None)
+    parts = [prompt]
+    if image and not st.session_state.get("image_processed"):
+        img = Image.open(image)
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG")
+        image_data = {
+            "inline_data": {
+                "mime_type": "image/jpeg",
+                "data": base64.b64encode(buf.getvalue()).decode(),
             }
-            parts.append(image_data)
-            st.session_state.image_processed = True
+        }
+        parts.append(image_data)
+        st.session_state.image_processed = True
 
-        res = model.generate_content({"role": "user", "parts": parts})
-        reply = res.text or "Sorry, I didn’t quite get that — wanna rephrase?"
-        name = st.session_state.user.get("name")
-        if name:
-            reply = reply.replace("you", name)
-        st.session_state.chat_history.append(("assistant", reply))
+    # Append user message
+    st.session_state.chat_history.append(("user", prompt))
+    st.session_state.messages.append({"role": "user", "parts": parts})
 
-        if st.session_state.user["uid"] != "guest":
-            db = setup_firebase()
-            db.collection("users").document(st.session_state.user["uid"]).set({
-                "chat_history": [{"role": r, "content": c} for r, c in st.session_state.chat_history]
-            }, merge=True)
+    with st.spinner("KAI is thinking..."):
+        try:
+            res = model.generate_content(st.session_state.messages)
+            reply = res.text or "Sorry, can you say that again?"
+            name = st.session_state.user.get("name")
+            if name:
+                reply = reply.replace("you", name)
+            st.session_state.chat_history.append(("assistant", reply))
+            st.session_state.messages.append({"role": "model", "parts": [reply]})
 
-    except Exception as e:
-        st.session_state.chat_history.append(("assistant", f"Oops, that hit a wall: {e}"))
+            if st.session_state.user["uid"] != "guest":
+                db = setup_firebase()
+                db.collection("users").document(st.session_state.user["uid"]).set({
+                    "chat_history": [{"role": r, "content": c} for r, c in st.session_state.chat_history]
+                }, merge=True)
+
+        except Exception as e:
+            st.session_state.chat_history.append(("assistant", f"Error: {str(e)}"))
 
 
 def main():
@@ -175,11 +188,12 @@ def main():
     if "user" not in st.session_state:
         handle_authentication()
         return
-    if st.session_state.user["uid"] != "guest":
+    if st.session_state.user["uid"] != "guest" and "chat_history" not in st.session_state:
         db = setup_firebase()
         doc = db.collection("users").document(st.session_state.user["uid"]).get()
         if doc.exists:
             st.session_state.chat_history = [(msg["role"], msg["content"]) for msg in doc.to_dict().get("chat_history", [])]
+            st.session_state.messages = [{"role": msg["role"], "parts": [msg["content"]]} for msg in doc.to_dict().get("chat_history", [])]
     show_sidebar()
     chat_interface()
 
