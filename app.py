@@ -107,7 +107,7 @@ def chat_interface():
     st.markdown("<h2 style='margin-top: 0;'>KAI</h2>", unsafe_allow_html=True)
     st.markdown("<style>[data-testid='stChatMessageContent'] > p {font-size: 1.1rem;}</style>", unsafe_allow_html=True)
     if "chat_history" not in st.session_state:
-        st.session_state.chat_history = [("assistant", "Hey there! I'm KAI. Let's chat!")]
+        st.session_state.chat_history = [("assistant", "Hey there! I'm KAI.")]
     for role, content in st.session_state.chat_history:
         st.chat_message(role).write(content)
     message_input()
