@@ -17,8 +17,14 @@ def setup_firebase():
     try:
         firebase_admin.get_app()
     except ValueError:
-        cred = credentials.Certificate("firebase_key.json")
-        firebase_admin.initialize_app(cred)
+        import os
+        import json
+
+        firebase_json = os.getenv("FIREBASE_JSON")
+        cert_dict = json.loads(firebase_json)
+        cred = credentials.Certificate(cert_dict)
+firebase_admin.initialize_app(cred)
+
     return firestore.client()
 
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
