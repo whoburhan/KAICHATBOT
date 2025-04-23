@@ -11,7 +11,7 @@ load_dotenv()
 import firebase_admin
 from firebase_admin import credentials, firestore
 import google.generativeai as genai
-
+import json
 # Initialize Firebase
 def setup_firebase():
     try:
