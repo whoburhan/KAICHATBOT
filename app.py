@@ -70,7 +70,7 @@ def handle_oauth_callback():
         st.exception(e)
 
 def display_logo():
-    st.image("Logo_1.png", use_column_width=True, output_format='PNG')
+    st.image("Logo_1.png", use_container_width=True)
 
 def handle_authentication():
     st.markdown("<style>body {background-color: #090c10;}</style>", unsafe_allow_html=True)
