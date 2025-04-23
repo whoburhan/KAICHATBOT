@@ -8,11 +8,6 @@ from PIL import Image
 import json
 
 load_dotenv()
-# right after load_dotenv() or at top of main()
-st.write({
-    "Has FIREBASE_JSON?": bool(st.secrets.get("FIREBASE_JSON")),
-    "Has GEMINI_API_KEY?": bool(st.secrets.get("GEMINI_API_KEY")),
-})
 
 
 import firebase_admin
@@ -24,11 +19,15 @@ def setup_firebase():
     try:
         firebase_admin.get_app()
     except ValueError:
-        firebase_json = os.getenv("FIREBASE_JSON")
-        cert_dict = json.loads(firebase_json)
+       # instead of os.getenv("FIREBASE_JSON"):
+        raw = st.secrets["FIREBASE_JSON"]
+        cert_dict = json.loads(raw)
         cred = credentials.Certificate(cert_dict)
         firebase_admin.initialize_app(cred)
-    return firestore.client()
+
+# for Gemini:
+genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+
 
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 model = genai.GenerativeModel("gemini-1.5-flash")
