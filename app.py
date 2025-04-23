@@ -134,57 +134,40 @@ def process_user_input(msg):
 
 # ―― MAIN ――
 def main():
-    setup_firebase()
+    # … auth & sidebar code …
 
-    # consume OAuth code if present
-    if "code" in st.query_params and "user" not in st.session_state:
-        handle_oauth_callback()
-
-    # not logged in yet?
-    if "user" not in st.session_state:
-        login_screen()
-        return
-
-    # load existing history for signed‐in users
-    if st.session_state.user["uid"] != "guest":
-        db = setup_firebase()
-        doc = db.collection("users")\
-                .document(st.session_state.user["uid"])\
-                .get()
-        if doc.exists:
-            hist = doc.to_dict().get("chat_history", [])
-            st.session_state.chat_history = [(m["role"],m["content"]) for m in hist]
-
-    show_sidebar()
-
-    # initialize if needed
+    # 1) load or init history  
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = [
-            ("assistant", "👋 Hello! I'm KAI, your rights guide. How can I help?")
+            ("assistant", "👋 Hello! I'm KAI. What can I call you?")
         ]
 
-    # **handle the new user message first** (no lag)
-    msg = st.chat_input("Type your message…")
-    if msg:
-        # ask guest name on first message
-        if st.session_state.user["uid"]=="guest" and st.session_state.user.get("name") is None:
-            nm = msg.split()[0].capitalize()
-            st.session_state.user["name"] = nm
-            st.session_state.chat_history.append(("user", msg))
+    # 2) **capture** new user input first (no lag)  
+    new_msg = st.chat_input("Your message…")
+    if new_msg:
+        # handle first-time guest naming
+        if st.session_state.user["uid"] == "guest" and st.session_state.user["name"] is None:
+            name = new_msg.split()[0].capitalize()
+            st.session_state.user["name"] = name
+            st.session_state.chat_history.append(("user", new_msg))
             st.session_state.chat_history.append(
-                ("assistant", f"Nice to meet you, {nm}! What can I do for you today?")
+                ("assistant", f"Nice to meet you, {name}! What can I do for you today?")
             )
         else:
-            process_user_input(msg)
+            # queue it for the model
+            st.session_state.chat_history.append(("user", new_msg))
+            # inline generate
+            with st.spinner("KAI is thinking…"):
+                resp = model.generate_content({"role":"user","parts":[new_msg]})
+                text = resp.text or "Sorry, can you rephrase?"
+                st.session_state.chat_history.append(("assistant", text))
 
-    # then render full chat
-    st.image("Logo_1.png", width=100)
-    st.markdown("## KAI")
-    st.markdown("<style>[data-testid='stChatMessageContent'] > p{font-size:1.1rem;}</style>",
-                unsafe_allow_html=True)
+        # persist for logged-in users here (no rerun)
 
+    # 3) now render everything
     for role, txt in st.session_state.chat_history:
         st.chat_message(role).write(txt)
+
 
 if __name__ == "__main__":
     main()
