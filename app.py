@@ -6,9 +6,9 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 import google.generativeai as genai
 
-# ─── CONFIG ────────────────────────────────────────────────────────────────────
+# ―― CONFIG ――
 load_dotenv()
-BASE_URL = "https://yourkai.streamlit.app"  # change to your URL
+BASE_URL = "https://yourkai.streamlit.app"
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 model = genai.GenerativeModel("gemini-1.5-flash")
 
@@ -16,12 +16,12 @@ def setup_firebase():
     try:
         firebase_admin.get_app()
     except ValueError:
-        cred_dict = json.loads(os.getenv("FIREBASE_JSON"))
-        cred = credentials.Certificate(cred_dict)
+        cert_dict = json.loads(os.getenv("FIREBASE_JSON"))
+        cred = credentials.Certificate(cert_dict)
         firebase_admin.initialize_app(cred)
     return firestore.client()
 
-# ─── OAUTH HELPERS ─────────────────────────────────────────────────────────────
+# ―― OAUTH HELPERS ――
 def get_google_auth_url():
     return (
         "https://accounts.google.com/o/oauth2/auth?"
@@ -35,50 +35,50 @@ def handle_oauth_callback():
     code = st.query_params.get("code")
     if not code:
         return
-    # exchange code
-    token = requests.post(
+    tok = requests.post(
         "https://oauth2.googleapis.com/token",
         data={
             "code": code,
             "client_id": os.getenv("GOOGLE_CLIENT_ID"),
             "client_secret": os.getenv("GOOGLE_CLIENT_SECRET"),
             "redirect_uri": BASE_URL,
-            "grant_type": "authorization_code"
+            "grant_type": "authorization_code",
         },
     ).json()
-    id_token = token.get("id_token")
+    id_token = tok.get("id_token")
     if not id_token:
-        st.error("❌ Couldn't fetch ID token")
+        st.error("❌ Couldn't get ID token")
         return
     info = requests.get(
         f"https://oauth2.googleapis.com/tokeninfo?id_token={id_token}"
     ).json()
-    first_name = info.get("name", "User").split()[0]
+    first = info.get("name", "User").split()[0]
     st.session_state.user = {
-        "uid": info["sub"], "name": first_name,
-        "email": info.get("email"), "picture": info.get("picture")
+        "uid": info["sub"],
+        "name": first,
+        "email": info.get("email", ""),
+        "picture": info.get("picture", ""),
     }
     st.experimental_set_query_params({})
 
-# ─── LOGIN SCREEN ──────────────────────────────────────────────────────────────
+# ―― UI BLOCKS ――
 def login_screen():
     st.markdown("<style>body{background:#090c10;}</style>", unsafe_allow_html=True)
     c1, c2, c3 = st.columns([1,2,1])
     with c2:
         st.image("Logo_1.png", use_column_width=True)
-        st.markdown("<p style='text-align:center;color:white;'>Sign in or continue as guest.</p>", unsafe_allow_html=True)
+        st.markdown("<p style='color:white;text-align:center;'>Sign in or continue as guest</p>", unsafe_allow_html=True)
         if st.button("Sign in with Google"):
             st.markdown(f'<meta http-equiv="refresh" content="0; url={get_google_auth_url()}">', unsafe_allow_html=True)
             st.stop()
-        st.markdown("<div style='text-align:center;color:white;'>— OR —</div>", unsafe_allow_html=True)
+        st.markdown("<div style='color:white;text-align:center;'>— OR —</div>", unsafe_allow_html=True)
         if st.button("Continue as Guest"):
-            st.session_state.user = {"uid":"guest","name":None,"picture":None}
+            st.session_state.user = {"uid": "guest", "name": None, "picture": None}
             st.session_state.awaiting_name = True
             st.session_state.chat_history = [
                 ("assistant", "👋 Hey there! I'm KAI. What's your name?")
             ]
 
-# ─── SIDEBAR ──────────────────────────────────────────────────────────────────
 def show_sidebar():
     with st.sidebar:
         pic = st.session_state.user.get("picture")
@@ -91,42 +91,14 @@ def show_sidebar():
             st.write(f"Welcome, **{name}**")
         if st.button("Sign Out"):
             st.session_state.clear()
-            return
-        up = st.file_uploader("Upload an image", type=["jpg","jpeg","png"])
+            st.experimental_rerun()
+        up = st.file_uploader("Upload image", type=["jpg","jpeg","png"])
         if up:
             st.session_state.uploaded_image = up
             st.session_state.image_processed = False
 
-# ─── CHAT UI ──────────────────────────────────────────────────────────────────
-def chat_interface():
-    st.image("Logo_1.png", width=100)
-    st.markdown("## KAI")
-    st.markdown("<style>[data-testid='stChatMessageContent'] > p{font-size:1.1rem;}</style>", unsafe_allow_html=True)
-
-    # init history
-    if "chat_history" not in st.session_state:
-        st.session_state.chat_history = [
-            ("assistant", "👋 Hello! I'm KAI, your rights guide. How can I help?")
-        ]
-
-    # display
-    for role, text in st.session_state.chat_history:
-        st.chat_message(role).write(text)
-
-    # user input
-    msg = st.chat_input("Type your message…")
-    if not msg:
-        return
-
-    # if guest needs naming
-    if st.session_state.user["uid"]=="guest" and st.session_state.user.get("name") is None:
-        nm = msg.split()[0].capitalize()
-        st.session_state.user["name"] = nm
-        st.session_state.chat_history.append(("user", msg))
-        st.session_state.chat_history.append(("assistant", f"Nice to meet you, {nm}! What can I do for you today?"))
-        return
-
-    # normal flow
+# ―― CHAT FLOW ――
+def process_user_input(msg):
     st.session_state.chat_history.append(("user", msg))
     parts = [msg]
     img = st.session_state.get("uploaded_image")
@@ -134,57 +106,85 @@ def chat_interface():
         buf = io.BytesIO()
         Image.open(img).save(buf, format="JPEG")
         parts.append({
-            "inline_data":{
-                "mime_type":"image/jpeg",
-                "data":base64.b64encode(buf.getvalue()).decode()
+            "inline_data": {
+                "mime_type": "image/jpeg",
+                "data": base64.b64encode(buf.getvalue()).decode(),
             }
         })
         st.session_state.image_processed = True
 
     with st.spinner("KAI is thinking…"):
-        resp = model.generate_content({"role":"user","parts":parts})
-        reply = resp.text or "Sorry, I didn’t catch that."
+        resp = model.generate_content({"role": "user", "parts": parts})
+        text = resp.text or "Sorry, I didn’t catch that."
         nm = st.session_state.user.get("name")
         if nm:
-            reply = reply.replace("you", nm)
-        st.session_state.chat_history.append(("assistant", reply))
+            text = text.replace("you", nm)
+        st.session_state.chat_history.append(("assistant", text))
 
-    # persist signed-in
-    if st.session_state.user["uid"]!="guest":
+    if st.session_state.user["uid"] != "guest":
         db = setup_firebase()
         db.collection("users")\
           .document(st.session_state.user["uid"])\
           .set({
-            "chat_history":[{"role":r,"content":c}
-                            for r,c in st.session_state.chat_history]
+              "chat_history": [
+                  {"role":r,"content":c}
+                  for r,c in st.session_state.chat_history
+              ]
           }, merge=True)
 
-# ─── MAIN ─────────────────────────────────────────────────────────────────────
+# ―― MAIN ――
 def main():
     setup_firebase()
 
-    # handle OAuth return
+    # consume OAuth code if present
     if "code" in st.query_params and "user" not in st.session_state:
         handle_oauth_callback()
 
-    # not logged in?
+    # not logged in yet?
     if "user" not in st.session_state:
         login_screen()
         return
 
-    # load existing history
-    if st.session_state.user["uid"]!="guest":
+    # load existing history for signed‐in users
+    if st.session_state.user["uid"] != "guest":
         db = setup_firebase()
         doc = db.collection("users")\
                 .document(st.session_state.user["uid"])\
                 .get()
         if doc.exists:
-            hist = doc.to_dict().get("chat_history",[])
+            hist = doc.to_dict().get("chat_history", [])
             st.session_state.chat_history = [(m["role"],m["content"]) for m in hist]
 
-    # UI
     show_sidebar()
-    chat_interface()
 
-if __name__=="__main__":
+    # initialize if needed
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = [
+            ("assistant", "👋 Hello! I'm KAI, your rights guide. How can I help?")
+        ]
+
+    # **handle the new user message first** (no lag)
+    msg = st.chat_input("Type your message…")
+    if msg:
+        # ask guest name on first message
+        if st.session_state.user["uid"]=="guest" and st.session_state.user.get("name") is None:
+            nm = msg.split()[0].capitalize()
+            st.session_state.user["name"] = nm
+            st.session_state.chat_history.append(("user", msg))
+            st.session_state.chat_history.append(
+                ("assistant", f"Nice to meet you, {nm}! What can I do for you today?")
+            )
+        else:
+            process_user_input(msg)
+
+    # then render full chat
+    st.image("Logo_1.png", width=100)
+    st.markdown("## KAI")
+    st.markdown("<style>[data-testid='stChatMessageContent'] > p{font-size:1.1rem;}</style>",
+                unsafe_allow_html=True)
+
+    for role, txt in st.session_state.chat_history:
+        st.chat_message(role).write(txt)
+
+if __name__ == "__main__":
     main()
