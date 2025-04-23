@@ -24,7 +24,6 @@ def setup_firebase():
         firebase_admin.initialize_app(cred)
     return firestore.client()
 
-# Configure Gemini
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 model = genai.GenerativeModel("gemini-1.5-flash")
 
@@ -115,6 +114,7 @@ def chat_interface():
     for role, content in st.session_state.chat_history:
         st.chat_message(role).write(content)
     message_input()
+    process_user_input()  # Trigger immediately
 
 def message_input():
     prompt = st.chat_input("Say Hello or anything you want")
@@ -123,18 +123,21 @@ def message_input():
             st.session_state.user["name"] = prompt.split()[0].capitalize()
             st.session_state.awaiting_name = False
             st.session_state.chat_history.append(("user", prompt))
-            st.session_state.chat_history.append(("assistant", f"Nice to meet you, {st.session_state.user['name']}! I must say, You have a beautiful name."))
-            st.rerun()
+            st.session_state.chat_history.append(("assistant", f"Nice to meet you, {st.session_state.user['name']}! I must say, You have a beautiful name. "))
         else:
             st.session_state.chat_history.append(("user", prompt))
-            reply = generate_kai_response(prompt)
-            st.session_state.chat_history.append(("assistant", reply))
-            st.rerun()
+            st.session_state.last_prompt = prompt
 
-def generate_kai_response(prompt):
+def process_user_input():
     try:
-        parts = [prompt]
+        if "last_prompt" not in st.session_state or not st.session_state.last_prompt:
+            return
+
+        prompt = st.session_state.last_prompt
+        st.session_state.last_prompt = None
+
         image = st.session_state.get("uploaded_file_data", None)
+        parts = [prompt]
         if image and not st.session_state.get("image_processed"):
             img = Image.open(image)
             buf = io.BytesIO()
@@ -150,23 +153,20 @@ def generate_kai_response(prompt):
 
         res = model.generate_content({"role": "user", "parts": parts})
         reply = res.text or "Sorry, I didn’t quite get that — wanna rephrase?"
-
         name = st.session_state.user.get("name")
         if name:
             reply = reply.replace("you", name)
+        st.session_state.chat_history.append(("assistant", reply))
 
         if st.session_state.user["uid"] != "guest":
             db = setup_firebase()
             db.collection("users").document(st.session_state.user["uid"]).set({
-                "chat_history": [
-                    {"role": r, "content": c} for r, c in st.session_state.chat_history + [("user", prompt), ("assistant", reply)]
-                ]
+                "chat_history": [{"role": r, "content": c} for r, c in st.session_state.chat_history]
             }, merge=True)
 
-        return reply
-
     except Exception as e:
-        return f"Oops, that hit a wall: {e}"
+        st.session_state.chat_history.append(("assistant", f"Oops, that hit a wall: {e}"))
+
 
 def main():
     setup_firebase()
