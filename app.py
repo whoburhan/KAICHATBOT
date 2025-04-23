@@ -5,13 +5,14 @@ from dotenv import load_dotenv
 import io
 import requests
 from PIL import Image
+import json
 
 load_dotenv()
 
 import firebase_admin
 from firebase_admin import credentials, firestore
 import google.generativeai as genai
-import json
+
 # Initialize Firebase
 def setup_firebase():
     try:
@@ -22,7 +23,6 @@ def setup_firebase():
         cred = credentials.Certificate(cert_dict)
         firebase_admin.initialize_app(cred)
     return firestore.client()
-
 
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 model = genai.GenerativeModel("gemini-1.5-flash")
@@ -101,7 +101,7 @@ def show_sidebar():
                 del st.session_state[key]
             st.rerun()
         uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
-        if uploaded_file:
+        if uploaded_file and "uploaded_file_data" not in st.session_state:
             st.session_state.uploaded_file_data = uploaded_file
             st.session_state.image_processed = False
 
@@ -128,6 +128,7 @@ def message_input():
             st.session_state.chat_history.append(("user", prompt))
             process_user_input(prompt)
 
+
 def process_user_input(prompt):
     try:
         image = st.session_state.get("uploaded_file_data", None)
@@ -144,19 +145,28 @@ def process_user_input(prompt):
             }
             parts.append(image_data)
             st.session_state.image_processed = True
+
+        history_parts = [
+            {"role": "user" if r == "user" else "model", "parts": [c]}
+            for r, c in st.session_state.chat_history if r in ["user", "assistant"]
+        ]
+        history_parts.append({"role": "user", "parts": parts})
+
         with st.spinner("KAI is thinking..."):
-            res = model.generate_content({"role": "user", "parts": parts})
+            res = model.generate_content(history_parts)
             reply = res.text or "Sorry, I didn’t quite get that — wanna rephrase?"
             name = st.session_state.user.get("name")
             if name:
                 reply = reply.replace("you", name)
             st.session_state.chat_history.append(("assistant", reply))
+
         if st.session_state.user["uid"] != "guest":
             db = setup_firebase()
             db.collection("users").document(st.session_state.user["uid"]).set({
                 "chat_history": [{"role": r, "content": c} for r, c in st.session_state.chat_history]
             }, merge=True)
         st.rerun()
+
     except Exception as e:
         st.session_state.chat_history.append(("assistant", f"Oops, that hit a wall: {e}"))
         st.rerun()
