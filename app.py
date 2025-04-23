@@ -6,7 +6,6 @@ import io
 import requests
 from PIL import Image
 import json
-import concurrent.futures
 
 load_dotenv()
 
@@ -85,7 +84,7 @@ def handle_authentication():
         st.markdown("<div style='text-align: center;'>Or</div>", unsafe_allow_html=True)
         if st.button("Continue as Guest"):
             st.session_state.user = {"uid": "guest", "name": None, "email": "", "picture": ""}
-            st.session_state.chat_history = [("assistant", "\U0001F44B Hey there! I'm KAI. What should I call you?")]
+            st.session_state.chat_history = [("assistant", "👋 Hey there! I'm KAI. What should I call you?")]
             st.session_state.awaiting_name = True
             st.rerun()
 
@@ -129,12 +128,6 @@ def message_input():
             st.session_state.chat_history.append(("user", prompt))
             process_user_input(prompt)
 
-def generate_reply_safely(parts):
-    try:
-        return model.generate_content({"role": "user", "parts": parts})
-    except Exception:
-        return None
-
 def process_user_input(prompt):
     try:
         image = st.session_state.get("uploaded_file_data", None)
@@ -151,27 +144,18 @@ def process_user_input(prompt):
             }
             parts.append(image_data)
             st.session_state.image_processed = True
-
         with st.spinner("KAI is thinking..."):
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(generate_reply_safely, parts)
-                try:
-                    res = future.result(timeout=30)
-                    reply = res.text if res and res.text else "Hmm... that one slipped past me. Mind rephrasing it?"
-                except concurrent.futures.TimeoutError:
-                    reply = "I was deep in thought and lost track of time. Can you ask that again?"
-
-        name = st.session_state.user.get("name")
-        if name:
-            reply = reply.replace("you", name)
-        st.session_state.chat_history.append(("assistant", reply))
-
+            res = model.generate_content({"role": "user", "parts": parts})
+            reply = res.text or "Sorry, I didn’t quite get that — wanna rephrase?"
+            name = st.session_state.user.get("name")
+            if name:
+                reply = reply.replace("you", name)
+            st.session_state.chat_history.append(("assistant", reply))
         if st.session_state.user["uid"] != "guest":
             db = setup_firebase()
             db.collection("users").document(st.session_state.user["uid"]).set({
                 "chat_history": [{"role": r, "content": c} for r, c in st.session_state.chat_history]
             }, merge=True)
-
         st.rerun()
     except Exception as e:
         st.session_state.chat_history.append(("assistant", f"Oops, that hit a wall: {e}"))
