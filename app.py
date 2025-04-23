@@ -8,6 +8,12 @@ from PIL import Image
 import json
 
 load_dotenv()
+# right after load_dotenv() or at top of main()
+st.write({
+    "Has FIREBASE_JSON?": bool(st.secrets.get("FIREBASE_JSON")),
+    "Has GEMINI_API_KEY?": bool(st.secrets.get("GEMINI_API_KEY")),
+})
+
 
 import firebase_admin
 from firebase_admin import credentials, firestore
