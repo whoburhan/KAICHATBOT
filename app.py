@@ -16,12 +16,6 @@ import google.generativeai as genai
 def setup_firebase():
     try:
         firebase_admin.get_app()
-    import os
-import json
-
-def setup_firebase():
-    try:
-        firebase_admin.get_app()
     except ValueError:
         firebase_json = os.getenv("FIREBASE_JSON")
         cert_dict = json.loads(firebase_json)
