@@ -27,7 +27,7 @@ def setup_firebase():
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 model = genai.GenerativeModel("gemini-1.5-flash")
 
-BASE_URL = "https://yourkai.streamlit.app"
+BASE_URL = "https://yourkai.streamlit.app/"
 
 def get_google_auth_url():
     return (
