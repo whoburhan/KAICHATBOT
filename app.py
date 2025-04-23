@@ -16,16 +16,19 @@ import google.generativeai as genai
 def setup_firebase():
     try:
         firebase_admin.get_app()
-    except ValueError:
-        import os
-        import json
+    import os
+import json
 
+def setup_firebase():
+    try:
+        firebase_admin.get_app()
+    except ValueError:
         firebase_json = os.getenv("FIREBASE_JSON")
         cert_dict = json.loads(firebase_json)
         cred = credentials.Certificate(cert_dict)
-firebase_admin.initialize_app(cred)
-
+        firebase_admin.initialize_app(cred)
     return firestore.client()
+
 
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 model = genai.GenerativeModel("gemini-1.5-flash")
