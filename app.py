@@ -159,6 +159,7 @@ def process_user_input(prompt):
             if name:
                 reply = reply.replace("you", name)
             st.session_state.chat_history.append(("assistant", reply))
+            st.rerun()
 
         if st.session_state.user["uid"] != "guest":
             db = setup_firebase()
