@@ -131,45 +131,70 @@ def message_input():
 
 def process_user_input(prompt):
     try:
-        image = st.session_state.get("uploaded_file_data", None)
+        # Only keep the last few turns for context to avoid overload
+        recent_context = st.session_state.chat_history[-10:]
         parts = [prompt]
+
+        # Add image if it's uploaded and not processed yet
+        image = st.session_state.get("uploaded_file_data", None)
         if image and not st.session_state.get("image_processed"):
-            img = Image.open(image)
-            buf = io.BytesIO()
-            img.save(buf, format="JPEG")
-            image_data = {
-                "inline_data": {
-                    "mime_type": "image/jpeg",
-                    "data": base64.b64encode(buf.getvalue()).decode(),
+            try:
+                img = Image.open(image)
+                buf = io.BytesIO()
+                img.save(buf, format="JPEG")
+                image_data = {
+                    "inline_data": {
+                        "mime_type": "image/jpeg",
+                        "data": base64.b64encode(buf.getvalue()).decode(),
+                    }
                 }
-            }
-            parts.append(image_data)
-            st.session_state.image_processed = True
+                parts.append(image_data)
+                st.session_state.image_processed = True
+            except Exception as e:
+                st.session_state.chat_history.append(("assistant", f"🛠️ Couldn't read the image. Error: {e}"))
+                st.rerun()
 
-        history_parts = [
-            {"role": "user" if r == "user" else "model", "parts": [c]}
-            for r, c in st.session_state.chat_history if r in ["user", "assistant"]
-        ]
-        history_parts.append({"role": "user", "parts": parts})
+        # Create Gemini-friendly history format
+        history_for_model = []
+        for role, msg in recent_context:
+            history_for_model.append({
+                "role": "user" if role == "user" else "model",
+                "parts": [msg]
+            })
 
+        # Add new message
+        history_for_model.append({
+            "role": "user",
+            "parts": parts
+        })
+
+        # Call Gemini
         with st.spinner("KAI is thinking..."):
-            res = model.generate_content(history_parts)
-            reply = res.text or "Sorry, I didn’t quite get that — wanna rephrase?"
-            name = st.session_state.user.get("name")
-            if name:
-                reply = reply.replace("you", name)
-            st.session_state.chat_history.append(("assistant", reply))
-            st.rerun()
+            try:
+                res = model.generate_content(history_for_model)
+                reply = res.text
+            except Exception as e:
+                reply = f"⚠️ Something broke while thinking: {e}"
 
+        # Personalize reply
+        name = st.session_state.user.get("name", "")
+        if name:
+            reply = reply.replace("you", name)
+
+        # Add to history
+        st.session_state.chat_history.append(("assistant", reply))
+
+        # Save to Firebase if signed in
         if st.session_state.user["uid"] != "guest":
             db = setup_firebase()
             db.collection("users").document(st.session_state.user["uid"]).set({
                 "chat_history": [{"role": r, "content": c} for r, c in st.session_state.chat_history]
             }, merge=True)
+
         st.rerun()
 
     except Exception as e:
-        st.session_state.chat_history.append(("assistant", f"Oops, that hit a wall: {e}"))
+        st.session_state.chat_history.append(("assistant", f"💥 Crash report: {e}"))
         st.rerun()
 
 def main():
