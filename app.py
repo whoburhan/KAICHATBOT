@@ -86,6 +86,7 @@ def handle_authentication():
             st.session_state.user = {"uid": "guest", "name": None, "email": "", "picture": ""}
             st.session_state.chat_history = [("assistant", "👋 Hey there! I'm KAI. What should I call you?")]
             st.session_state.awaiting_name = True
+            st.session_state.user_profile = {}
             st.rerun()
 
 def show_sidebar():
@@ -123,7 +124,8 @@ def message_input():
                 st.session_state.user["name"] = prompt.split()[0].capitalize()
                 st.session_state.awaiting_name = False
                 st.session_state.chat_history.append(("user", prompt))
-                st.session_state.chat_history.append(("assistant", f"Nice to meet you, {st.session_state.user['name']}! How can I help you today?"))
+                st.session_state.chat_history.append(("assistant", f"Nice to meet you, {st.session_state.user['name']}! Just a quick check: Are you a student, scholar, or traveler? What country are you moving to? What's your visa or immigration status?
+\nThis will help me guide you better."))
             else:
                 st.session_state.chat_history.append(("user", prompt))
                 st.session_state.chat_history.append(("assistant", "I'd love to know what to call you! Could you tell me your name?"))
@@ -148,9 +150,16 @@ def process_user_input(prompt):
             }
             parts.append(image_data)
             st.session_state.image_processed = True
-            st.session_state.image_description_cached = image_data  # caching the image once
+            st.session_state.image_description_cached = image_data
         elif st.session_state.get("image_processed"):
             parts = [prompt]
+
+        # Personalization prompt injection
+        if "student" in prompt.lower() or "visa" in prompt.lower() or "immigration" in prompt.lower():
+            user_data = st.session_state.get("user_profile", {})
+            if not user_data:
+                prompt += "\n\nBefore I answer, may I know your visa status, immigration status, and the country you're moving to? I can provide much better help that way."
+
         with st.spinner("KAI is thinking..."):
             res = model.generate_content({"role": "user", "parts": parts})
             reply = res.text or "Sorry, I didn't quite get that — wanna rephrase?"
