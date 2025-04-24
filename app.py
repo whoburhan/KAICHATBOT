@@ -29,6 +29,14 @@ model = genai.GenerativeModel("gemini-1.5-flash")
 
 BASE_URL = "https://yourkai.streamlit.app"
 
+# Context tracker for guest image
+if "image_context" not in st.session_state:
+    st.session_state.image_context = None
+
+# Track user name assignment correctly
+if "awaiting_name" not in st.session_state:
+    st.session_state.awaiting_name = False
+
 def get_google_auth_url():
     return (
         f"https://accounts.google.com/o/oauth2/auth?"
@@ -84,10 +92,8 @@ def handle_authentication():
         st.markdown("<div style='text-align: center;'>Or</div>", unsafe_allow_html=True)
         if st.button("Continue as Guest"):
             st.session_state.user = {"uid": "guest", "name": None, "email": "", "picture": ""}
-            if "chat_history" not in st.session_state:
-                st.session_state.chat_history = [("assistant", "👋 Hey there! I'm KAI. I'm here to help you navigate life in a new country — from understanding local traditions to getting a grip on visa processes or cultural surprises. What’s on your mind?")]
+            st.session_state.chat_history = [("assistant", "👋 Hey there! I'm KAI. What should I call you?")]
             st.session_state.awaiting_name = True
-            st.session_state.user_profile = {}
             st.rerun()
 
 def show_sidebar():
@@ -106,27 +112,41 @@ def show_sidebar():
         if uploaded_file:
             st.session_state.uploaded_file_data = uploaded_file
             st.session_state.image_processed = False
+            st.session_state.image_context = None  # Reset context
 
 def chat_interface():
     display_logo()
     st.markdown("<h2 style='margin-top: 0;'>KAI</h2>", unsafe_allow_html=True)
     st.markdown("<style>[data-testid='stChatMessageContent'] > p {font-size: 1.1rem;}</style>", unsafe_allow_html=True)
     if "chat_history" not in st.session_state:
-        st.session_state.chat_history = [("assistant", "👋 Hey there! I'm KAI. I'm here to help you navigate life in a new country — from understanding local traditions to getting a grip on visa processes or cultural surprises. What’s on your mind?")]
+        st.session_state.chat_history = [("assistant", "Hey there! I'm KAI.")]
     for role, content in st.session_state.chat_history:
         st.chat_message(role).write(content)
     message_input()
 
 def message_input():
-    prompt = st.chat_input("Say Hello or ask anything")
+    prompt = st.chat_input("Say Hello or anything you want")
     if prompt:
-        st.session_state.chat_history.append(("user", prompt))
-        process_user_input(prompt)
+        # Auto-detect name
+        if st.session_state.user["uid"] == "guest" and st.session_state.user.get("name") is None and st.session_state.awaiting_name:
+            if len(prompt.split()) == 1 and prompt[0].isupper():
+                st.session_state.user["name"] = prompt.split()[0].capitalize()
+                st.session_state.awaiting_name = False
+                st.session_state.chat_history.append(("user", prompt))
+                st.session_state.chat_history.append(("assistant", f"Nice to meet you, {st.session_state.user['name']}! How can I help you today?"))
+            else:
+                st.session_state.chat_history.append(("user", prompt))
+                st.session_state.chat_history.append(("assistant", "I'd love to know what to call you! Could you tell me your name?"))
+            st.rerun()
+        else:
+            st.session_state.chat_history.append(("user", prompt))
+            process_user_input(prompt)
 
 def process_user_input(prompt):
     try:
         image = st.session_state.get("uploaded_file_data", None)
         parts = [prompt]
+
         if image and not st.session_state.get("image_processed"):
             img = Image.open(image)
             buf = io.BytesIO()
@@ -138,23 +158,14 @@ def process_user_input(prompt):
                 }
             }
             parts.append(image_data)
+            st.session_state.image_context = image_data
             st.session_state.image_processed = True
-            st.session_state.image_description_cached = image_data
-        elif st.session_state.get("image_processed"):
-            parts = [prompt]
-
-        base_prompt = (
-            "You're KAI, an empathetic, witty, and intelligent cultural assistant. You're designed to support international students, scholars, and travelers "
-            "who are moving to or living in a new country. Your goal is to help them understand immigration processes, laws, traditions, university systems, "
-            "and local etiquette in a friendly, non-intimidating way. If they seem confused or uncertain, reassure them. If they're casual, match their tone."
-            "Stay supportive, helpful, and informative without over-assuming. Ask follow-up questions naturally."
-        )
-
-        parts.insert(0, base_prompt)
+        elif st.session_state.image_context:
+            parts.append(st.session_state.image_context)
 
         with st.spinner("KAI is thinking..."):
             res = model.generate_content({"role": "user", "parts": parts})
-            reply = res.text or "Sorry, I didn't quite get that — wanna rephrase?"
+            reply = res.text or "Sorry, I didn’t quite get that — wanna rephrase?"
             name = st.session_state.user.get("name")
             if name:
                 reply = reply.replace("you", name)
