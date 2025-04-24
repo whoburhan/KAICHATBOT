@@ -1,11 +1,11 @@
+# ───────────────────────────────────────────────────────────────
+# KAI – Streamlit × Gemini × Firebase
+# Last updated: 24-Apr-2025  ▸ fixes greeting-echo + image re-processing
+# ───────────────────────────────────────────────────────────────
 import streamlit as st
-import os
-import base64
+import os, base64, io, json, requests
 from dotenv import load_dotenv
-import io
-import requests
 from PIL import Image
-import json
 
 load_dotenv()
 
@@ -13,29 +13,37 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 import google.generativeai as genai
 
-# Initialize Firebase
+# ─────────────────── Firebase init ─────────────────────────────
 def setup_firebase():
     try:
         firebase_admin.get_app()
     except ValueError:
-        firebase_json = os.getenv("FIREBASE_JSON")
-        cert_dict = json.loads(firebase_json)
+        cert_dict = json.loads(os.getenv("FIREBASE_JSON"))
         cred = credentials.Certificate(cert_dict)
         firebase_admin.initialize_app(cred)
     return firestore.client()
 
+# ─────────────────── Gemini config + system prompt ─────────────
+SYSTEM_INSTRUCTION = """
+You are KAI, a specialized assistant for international students, scholars, and expatriates.
+<… same content you pasted …>
+"""
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-model = genai.GenerativeModel("gemini-1.5-flash")
+model = genai.GenerativeModel(
+    "gemini-1.5-flash",
+    system_instruction=SYSTEM_INSTRUCTION
+)
 
+# ─────────────────── OAuth helpers ─────────────────────────────
 BASE_URL = "https://yourkai.streamlit.app"
 
 def get_google_auth_url():
     return (
-        f"https://accounts.google.com/o/oauth2/auth?"
+        "https://accounts.google.com/o/oauth2/auth?"
         f"client_id={os.getenv('GOOGLE_CLIENT_ID')}&"
         f"redirect_uri={BASE_URL}&"
-        f"scope=email%20profile%20openid&"
-        f"response_type=code"
+        "scope=email%20profile%20openid&"
+        "response_type=code"
     )
 
 def handle_oauth_callback():
@@ -47,157 +55,192 @@ def handle_oauth_callback():
             "client_id": os.getenv("GOOGLE_CLIENT_ID"),
             "client_secret": os.getenv("GOOGLE_CLIENT_SECRET"),
             "redirect_uri": BASE_URL,
-            "grant_type": "authorization_code"
+            "grant_type": "authorization_code",
         }
-        res = requests.post(token_url, data=data)
-        token_data = res.json()
+        token_data = requests.post(token_url, data=data).json()
         id_token = token_data.get("id_token")
         if not id_token:
-            st.error("Could not retrieve ID token.")
-            return
-        user_info = requests.get(f"https://oauth2.googleapis.com/tokeninfo?id_token={id_token}").json()
-        name = user_info.get("name", "User").split(" ")[0]
+            st.error("Could not retrieve ID token."); return
+        user_info = requests.get(
+            f"https://oauth2.googleapis.com/tokeninfo?id_token={id_token}"
+        ).json()
         st.session_state.user = {
             "uid": user_info.get("sub", ""),
-            "name": name,
+            "name": user_info.get("name", "User").split()[0],
             "email": user_info.get("email", ""),
-            "picture": user_info.get("picture", "")
+            "picture": user_info.get("picture", ""),
         }
-        st.query_params.clear()
-        st.rerun()
+        st.query_params.clear(); st.rerun()
     except Exception as e:
-        st.error("OAuth login failed.")
-        st.exception(e)
+        st.error("OAuth login failed."); st.exception(e)
 
-def display_logo():
-    st.image("Logo_1.png", use_container_width=True)
+# ─────────────────── UI helpers ────────────────────────────────
+def display_logo():      st.image("Logo_1.png", use_column_width=True)
 
 def handle_authentication():
-    st.markdown("<style>body {background-color: #090c10;}</style>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         display_logo()
-        st.markdown("<p style='text-align: center;'>Please sign in or continue as guest to use the chatbot.</p>", unsafe_allow_html=True)
+        st.markdown("<p style='text-align:center'>Sign in or continue as guest.</p>",
+                    unsafe_allow_html=True)
         if st.button("Sign in with Google", key="google_sign_in"):
             st.markdown(f'<meta http-equiv="refresh" content="0; url={get_google_auth_url()}">', unsafe_allow_html=True)
             st.stop()
-        st.markdown("<div style='text-align: center;'>Or</div>", unsafe_allow_html=True)
         if st.button("Continue as Guest"):
             st.session_state.user = {"uid": "guest", "name": None, "email": "", "picture": ""}
             st.session_state.chat_history = [("assistant", "👋 Hey there! I'm KAI. What should I call you?")]
-            st.session_state.awaiting_name = True
+            st.session_state.awaiting_name  = True
             st.session_state.image_processed = False
             st.rerun()
+
+def enforce_boundaries(prompt:str)->bool:
+    core_topics = ["visa","immigration","legal","culture","tradition","education",
+                   "university","admission","housing","healthcare","transport","safety",
+                   "financial","cost of living","abroad","international","relocation","moving"]
+    pl = prompt.lower()
+    return any(t in pl for t in core_topics)
 
 def show_sidebar():
     with st.sidebar:
-        if st.session_state.user.get("picture"):
-            st.markdown(f"<img src='{st.session_state.user['picture']}' style='width:100px; height:100px; border-radius:50%;'>", unsafe_allow_html=True)
-        else:
-            st.image("Logo_1.png", width=100)
-        if st.session_state.user.get("name"):
-            st.write(f"Welcome, {st.session_state.user['name']}!")
+        if st.session_state.user.get("picture"): st.image(st.session_state.user["picture"], width=100)
+        else: display_logo()
+        if st.session_state.user.get("name"): st.write(f"Welcome, {st.session_state.user['name']}!")
+
         if st.button("Sign Out"):
-            for key in list(st.session_state.keys()):
-                del st.session_state[key]
+            for k in list(st.session_state.keys()): del st.session_state[k]
             st.rerun()
-        uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
+
+        if st.button("Clear Conversation"):
+            if st.session_state.user["uid"]=="guest" and st.session_state.user.get("name"):
+                st.session_state.chat_history=[("assistant",f"Conversation cleared. How can I help you today, {st.session_state.user['name']}?")]
+            else:
+                st.session_state.chat_history=[("assistant","Conversation cleared. How can I help you today?")]
+            st.rerun()
+
+        uploaded_file = st.file_uploader("Upload an image", type=["jpg","jpeg","png"])
         if uploaded_file:
             st.session_state.uploaded_file_data = uploaded_file
-            st.session_state.image_processed = False
+            st.session_state.image_processed   = False
 
 def chat_interface():
     display_logo()
-    st.markdown("<h2 style='margin-top: 0;'>KAI</h2>", unsafe_allow_html=True)
-    st.markdown("<style>[data-testid='stChatMessageContent'] > p {font-size: 1.1rem;}</style>", unsafe_allow_html=True)
     if "chat_history" not in st.session_state:
-        st.session_state.chat_history = [("assistant", "Hey there! I'm KAI.")]
-    for role, content in st.session_state.chat_history:
-        st.chat_message(role).write(content)
+        st.session_state.chat_history=[("assistant","Hey there! I'm KAI. How can I help you today?")]
+    for role, txt in st.session_state.chat_history:
+        with st.chat_message(role): st.write(txt)
     message_input()
 
 def message_input():
-    prompt = st.chat_input("Say Hello or anything you want")
+    prompt = st.chat_input("Ask about visas, culture, housing …")
     if prompt:
-        if st.session_state.user["uid"] == "guest" and st.session_state.user.get("name") is None and st.session_state.awaiting_name:
-            if len(prompt.split()) == 1 and len(prompt) < 20 and not any(word in prompt.lower() for word in ["hi", "hello", "hey"]):
-                st.session_state.user["name"] = prompt.split()[0].capitalize()
-                st.session_state.awaiting_name = False
-                st.session_state.chat_history.append(("user", prompt))
-                st.session_state.chat_history.append(("assistant", f"Nice to meet you, {st.session_state.user['name']}! How can I help you today?"))
-            else:
-                st.session_state.chat_history.append(("user", prompt))
-                st.session_state.chat_history.append(("assistant", "I'd love to know what to call you! Could you tell me your name?"))
-            st.rerun()
+        if (st.session_state.user["uid"]=="guest" 
+            and st.session_state.user.get("name") is None 
+            and st.session_state.awaiting_name):
+            handle_guest_name(prompt)
         else:
             st.session_state.chat_history.append(("user", prompt))
             process_user_input(prompt)
 
-def process_user_input(prompt):
+def handle_guest_name(prompt:str):
+    st.session_state.chat_history.append(("user", prompt))
+    name=None
+    if any(k in prompt.lower() for k in ["my name is","i am","call me"]):
+        words=prompt.replace(",","").split()
+        for i,w in enumerate(words):
+            if w.lower() in ["is","am"] and i+1<len(words):
+                name=words[i+1].capitalize(); break
+    if name:
+        st.session_state.user["name"]=name
+        st.session_state.awaiting_name=False
+        st.session_state.chat_history.append(("assistant",f"Nice to meet you, {name}! How can I help you with your international plans?"))
+    else:
+        st.session_state.chat_history.append(("assistant","Got it! May I know what name I should call you?"))
+    st.rerun()
+
+# ─────────────────── pronoun fixer ─────────────────────────────
+def fix_pronouns(text:str, name:str)->str:
+    if not name: return text
+    repl = {
+        f"{name} is":"you are",   f"{name}'s":"your",   f"{name} has":"you have",
+        f"{name} should":"you should", f"{name} can":"you can", f"{name} will":"you will",
+        f"{name} was":"you were", f"{name} were":"you were", f"{name} needs":"you need",
+        f"{name} wants":"you want"
+    }
+    for wrong, right in repl.items():
+        text = text.replace(wrong.lower(), right)
+    return text
+
+# ─────────────────── NEW: role-map helper ──────────────────────
+def map_role(role:str)->str:
+    return "user" if role=="user" else "model"   # gemini calls assistant "model"
+
+# ─────────────────── main inference routine ───────────────────
+def process_user_input(prompt:str):
     try:
-        image = st.session_state.get("uploaded_file_data", None)
-        parts = [prompt]
-        if image and not st.session_state.get("image_processed"):
-            img = Image.open(image)
-            buf = io.BytesIO()
-            img.save(buf, format="JPEG")
-            image_data = {
-                "inline_data": {
-                    "mime_type": "image/jpeg",
-                    "data": base64.b64encode(buf.getvalue()).decode(),
-                }
-            }
-            parts.append(image_data)
-            st.session_state.image_processed = True
+        # ---- build structured Gemini message list (no echo of greetings) ----
+        messages=[]
+        for role, content in st.session_state.chat_history[-6:]:
+            messages.append({"role": map_role(role), "parts":[content]})
+        messages.append({"role":"user","parts":[prompt]})
 
-        system_prompt = (
-            "You are KAI, a smart, empathetic chatbot built to assist international students, scholars, graduates, and travelers "
-            "moving abroad. Your core responsibility is to help them understand laws, rights, visa procedures, cultural norms, education systems, "
-            "and day-to-day guidance in their destination countries. Do NOT go outside this scope. You should NEVER respond generically. "
-            "You MUST behave empathetically, use informal and friendly tone, and follow-up intelligently on user's previous responses. "
-            "Only use third-person grammar when absolutely necessary. Do NOT reprocess uploaded images. Use them only once per session. "
-            "If a user uploads an image and sends a follow-up, treat it as text-based unless a new image is uploaded."
-        )
+        # ---- one-time image processing -------------------------------------
+        if st.session_state.get("uploaded_file_data") and not st.session_state.get("image_processed"):
+            img = Image.open(st.session_state.uploaded_file_data)
+            buf = io.BytesIO(); img.save(buf, format="JPEG")
+            image_part = {"inline_data":{"mime_type":"image/jpeg","data":base64.b64encode(buf.getvalue()).decode()}}
+            messages.append({"role":"user","parts":[
+                "User just uploaded this image. Analyse it only once and relate it to the current query; do not refer back unless explicitly asked."
+            ]})
+            messages.append({"role":"user","parts":[image_part]})
+            st.session_state.image_processed=True
 
-        with st.spinner("KAI is thinking..."):
-            res = model.generate_content(
-                messages=[
-                    {"role": "system", "parts": [system_prompt]},
-                    {"role": "user", "parts": parts}
-                ]
+        # ---- Gemini call ----------------------------------------------------
+        with st.spinner("KAI is thinking…"):
+            res   = model.generate_content(messages)
+            reply = res.text or "Sorry, I didn't quite get that. Could you rephrase?"
+
+        # ---- enforce second-person style ------------------------------------
+        if (n:=st.session_state.user.get("name")): reply = fix_pronouns(reply, n)
+
+        st.session_state.chat_history.append(("assistant", reply))
+
+        # ---- persist for logged-in users ------------------------------------
+        if st.session_state.user["uid"]!="guest":
+            db=setup_firebase()
+            db.collection("users").document(st.session_state.user["uid"]).set(
+                {"chat_history":[{"role":r,"content":c} for r,c in st.session_state.chat_history]},
+                merge=True
             )
-            reply = res.text or "Sorry, I didn’t quite get that — wanna rephrase?"
-
-            reply = res.text or "Sorry, I didn’t quite get that — wanna rephrase?"
-            name = st.session_state.user.get("name")
-            if name:
-                reply = reply.replace("you", name).replace("Burhan", name).replace("Burhanr", name)
-            st.session_state.chat_history.append(("assistant", reply))
-
-        if st.session_state.user["uid"] != "guest":
-            db = setup_firebase()
-            db.collection("users").document(st.session_state.user["uid"]).set({
-                "chat_history": [{"role": r, "content": c} for r, c in st.session_state.chat_history]
-            }, merge=True)
-
         st.rerun()
 
     except Exception as e:
-        st.session_state.chat_history.append(("assistant", f"Oops, that hit a wall: {e}"))
+        st.session_state.chat_history.append(("assistant","Sorry, I encountered an error. Please try again."))
         st.rerun()
 
+# ─────────────────── Streamlit page bootstrap ─────────────────
 def main():
+    st.set_page_config(page_title="KAI – Your International Assistant", page_icon="🌍")
     setup_firebase()
+
     if "code" in st.query_params and "user" not in st.session_state:
         handle_oauth_callback()
+
     if "user" not in st.session_state:
-        handle_authentication()
-        return
-    if st.session_state.user["uid"] != "guest":
+        handle_authentication(); return
+
+    # load chat history for signed-in users
+    if st.session_state.user["uid"]!="guest" and "chat_history" not in st.session_state:
         db = setup_firebase()
         doc = db.collection("users").document(st.session_state.user["uid"]).get()
         if doc.exists:
-            st.session_state.chat_history = [(msg["role"], msg["content"]) for msg in doc.to_dict().get("chat_history", [])]
+            st.session_state.chat_history=[(m["role"], m["content"]) for m in doc.to_dict().get("chat_history",[])]
+
+    if "chat_history" not in st.session_state:
+        if st.session_state.user.get("name"):
+            st.session_state.chat_history=[("assistant",f"Welcome back, {st.session_state.user['name']}! How can I help today?")]
+        else:
+            st.session_state.chat_history=[("assistant","Hey there! How can I assist you with your international plans?")]
+
     show_sidebar()
     chat_interface()
 
