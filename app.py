@@ -24,28 +24,44 @@ def setup_firebase():
         firebase_admin.initialize_app(cred)
     return firestore.client()
 
+# Configure Gemini with enhanced system instruction
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-model = genai.GenerativeModel("gemini-1.5-flash", system_instruction="""
-You are KAI, a warm, intelligent, and helpful assistant for international students, scholars, and individuals moving abroad. Your mission is to help users understand:
-- Legal rights and visa regulations in different countries
-- Cultural norms, traditions, and integration tips
-- Educational pathways, admissions processes, and trending courses
-- Safety information, housing options, healthcare systems, and transportation
-- Financial planning, cost of living, and budgeting for international moves
 
-Stay within these boundaries. If asked about topics outside your scope:
-- For casual questions: respond with light wit or sarcasm matching the user's tone
-- For serious but unrelated topics: politely redirect to your area of expertise
+SYSTEM_INSTRUCTION = """
+You are KAI, a specialized assistant for international students, scholars, and expatriates. Your expertise is strictly limited to:
 
-Maintain conversation context throughout the session. Remember user preferences, previous questions, and personal details they've shared to provide coherent assistance.
+CORE DOMAINS:
+1. Visa regulations, legal rights, and immigration procedures
+2. Cultural norms, traditions, and social integration
+3. Education systems, admissions processes, and academic pathways
+4. Practical living information (housing, healthcare, transportation, safety)
+5. Financial planning for international relocation
 
-For image analysis:
-- Process uploaded images once with your response
-- Don't reprocess or mention the same image again unless specifically requested
-- Focus on relevant information in images like documents, locations, or items related to international travel
+BOUNDARY ENFORCEMENT:
+- For off-topic queries, assess the user's tone:
+  * Playful questions get witty/sarcastic responses matching their style
+  * Serious but unrelated questions get polite redirection
+  * Clearly state when something is beyond your scope
 
-Be conversational and natural - avoid stilted responses. Match your tone to the user's style, using humor when appropriate. Address users by name when available, and use second-person (you/your) over third-person references.
-""")
+CONTEXT MANAGEMENT:
+- Remember user details (name, destination country, specific concerns)
+- Maintain conversation context throughout the session
+- For returning users, recall previous discussions to provide continuity
+
+IMAGE PROCESSING:
+- Analyze images only when first uploaded with accompanying text
+- Extract relevant information (documents, locations, items)
+- Never reprocess the same image unless explicitly requested
+- Focus only on internationally-relevant image content
+
+TONE GUIDELINES:
+- Friendly but professional
+- Adapt to user's communication style
+- Use humor appropriately when user initiates it
+- Address users by name when known
+"""
+
+model = genai.GenerativeModel("gemini-1.5-flash", system_instruction=SYSTEM_INSTRUCTION)
 
 BASE_URL = "https://yourkai.streamlit.app"
 
@@ -90,7 +106,7 @@ def handle_oauth_callback():
         st.exception(e)
 
 def display_logo():
-    st.image("Logo_1.png", use_container_width=True)
+    st.image("Logo_1.png", use_column_width=True)
 
 def handle_authentication():
     col1, col2, col3 = st.columns([1, 2, 1])
@@ -109,18 +125,44 @@ def handle_authentication():
             st.session_state.image_processed = False
             st.rerun()
 
+def enforce_boundaries(prompt):
+    """Analyze if prompt is within KAI's scope"""
+    core_topics = [
+        "visa", "immigration", "legal", "culture", "tradition",
+        "education", "university", "admission", "housing",
+        "healthcare", "transport", "safety", "financial", "cost of living",
+        "abroad", "international", "relocation", "moving"
+    ]
+    
+    prompt_lower = prompt.lower()
+    return any(topic in prompt_lower for topic in core_topics)
+
 def show_sidebar():
     with st.sidebar:
         if st.session_state.user.get("picture"):
             st.image(st.session_state.user['picture'], width=100)
         else:
             st.image("Logo_1.png", width=100)
+        
         if st.session_state.user.get("name"):
             st.write(f"Welcome, {st.session_state.user['name']}!")
+        
         if st.button("Sign Out"):
             for key in list(st.session_state.keys()):
                 del st.session_state[key]
             st.rerun()
+        
+        if st.button("Clear Conversation"):
+            if st.session_state.user["uid"] == "guest":
+                st.session_state.chat_history = [
+                    ("assistant", f"Conversation cleared. How can I help you today{', ' + st.session_state.user['name'] if st.session_state.user.get('name') else ''}?")
+                ]
+            else:
+                st.session_state.chat_history = [
+                    ("assistant", f"Conversation cleared. How can I help you today, {st.session_state.user['name']}?")
+                ]
+            st.rerun()
+        
         uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
         if uploaded_file:
             st.session_state.uploaded_file_data = uploaded_file
@@ -130,35 +172,65 @@ def chat_interface():
     display_logo()
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = [("assistant", "Hey there! I'm KAI.")]
+    
     for role, content in st.session_state.chat_history:
-        st.chat_message(role).write(content)
+        with st.chat_message(role):
+            st.write(content)
+    
     message_input()
 
 def message_input():
-    prompt = st.chat_input("Say Hello or ask something...")
+    prompt = st.chat_input("Ask about visas, culture, housing, or other international topics...")
     if prompt:
         if st.session_state.user["uid"] == "guest" and st.session_state.user.get("name") is None and st.session_state.awaiting_name:
-            # Smart name extraction
-            if any(x.lower() in prompt.lower() for x in ["my name is", "i am", "call me"]):
-                words = prompt.replace(",", "").split()
-                for i, word in enumerate(words):
-                    if word.lower() in ["is", "am"] and i + 1 < len(words):
-                        st.session_state.user["name"] = words[i + 1].capitalize()
-                        st.session_state.awaiting_name = False
-                        break
-            st.session_state.chat_history.append(("user", prompt))
-            if st.session_state.user.get("name"):
-                st.session_state.chat_history.append(("assistant", f"Nice to meet you, {st.session_state.user['name']}! How can I help you today?"))
-            else:
-                st.session_state.chat_history.append(("assistant", "Got it! May I know your name so I can address you better?"))
-            st.rerun()
+            handle_guest_name(prompt)
         else:
             st.session_state.chat_history.append(("user", prompt))
             process_user_input(prompt)
 
+def handle_guest_name(prompt):
+    """Extract name from guest user's first message"""
+    st.session_state.chat_history.append(("user", prompt))
+    
+    # Smart name extraction
+    name = None
+    if any(x.lower() in prompt.lower() for x in ["my name is", "i am", "call me"]):
+        words = prompt.replace(",", "").split()
+        for i, word in enumerate(words):
+            if word.lower() in ["is", "am"] and i + 1 < len(words):
+                name = words[i + 1].capitalize()
+                break
+    
+    if name:
+        st.session_state.user["name"] = name
+        st.session_state.awaiting_name = False
+        st.session_state.chat_history.append(("assistant", f"Nice to meet you, {name}! How can I help you with your international plans?"))
+    else:
+        st.session_state.chat_history.append(("assistant", "Got it! May I know your name so I can address you better?"))
+    
+    st.rerun()
+
 def process_user_input(prompt):
     try:
-        parts = [prompt]
+        # Get context from previous messages (last 6 exchanges)
+        context = "\n".join([f"{role}: {content}" for role, content in st.session_state.chat_history[-6:]])
+        
+        # Prepare the prompt with context
+        full_prompt = f"""
+        Conversation context (most recent first):
+        {context}
+        
+        Current query: {prompt}
+        
+        Instructions:
+        - Respond to the current query while maintaining context
+        - If query is out of scope, respond appropriately based on user tone
+        - For images, only process if new upload exists
+        """
+        
+        parts = [full_prompt]
+        
+        # Handle image processing if new image uploaded
         if st.session_state.get("uploaded_file_data") and not st.session_state.get("image_processed"):
             img = Image.open(st.session_state.uploaded_file_data)
             buf = io.BytesIO()
@@ -169,15 +241,26 @@ def process_user_input(prompt):
                     "data": base64.b64encode(buf.getvalue()).decode(),
                 }
             }
+            parts.append({
+                "text": "User uploaded an image. Please analyze it in context with their text query. "
+                        "Extract only relevant information about international relocation, documents, "
+                        "or location-specific details. Do not mention this image again unless asked."
+            })
             parts.append(image_data)
             st.session_state.image_processed = True
+        
         with st.spinner("KAI is thinking..."):
             res = model.generate_content({"role": "user", "parts": parts})
-            reply = res.text or "Sorry, I didn't quite get that. Mind rephrasing?"
+            reply = res.text or "Sorry, I didn't quite get that. Could you rephrase your question?"
+            
+            # Personalize response if name is available
             name = st.session_state.user.get("name")
             if name:
-                reply = reply.replace("you", name).replace(f"{name}r", name)  # fix third-person
+                reply = reply.replace("you", name).replace("your", f"{name}'s").replace(f"{name}r", name)
+            
             st.session_state.chat_history.append(("assistant", reply))
+        
+        # Save conversation for authenticated users
         if st.session_state.user["uid"] != "guest":
             db = setup_firebase()
             db.collection("users").document(st.session_state.user["uid"]).set({
@@ -186,18 +269,27 @@ def process_user_input(prompt):
                     for role, content in st.session_state.chat_history
                 ]
             }, merge=True)
+        
         st.rerun()
     except Exception as e:
-        st.session_state.chat_history.append(("assistant", f"Yikes, something broke: {e}"))
+        st.session_state.chat_history.append(("assistant", "Sorry, I encountered an error processing your request. Please try again."))
         st.rerun()
 
 def main():
+    st.set_page_config(page_title="KAI - Your International Assistant", page_icon="🌍")
+    
     setup_firebase()
+    
+    # Handle OAuth callback if needed
     if "code" in st.query_params and "user" not in st.session_state:
         handle_oauth_callback()
+    
+    # Initialize session if new user
     if "user" not in st.session_state:
         handle_authentication()
         return
+    
+    # Load chat history for returning authenticated users
     if st.session_state.user["uid"] != "guest":
         db = setup_firebase()
         doc = db.collection("users").document(st.session_state.user["uid"]).get()
@@ -205,6 +297,18 @@ def main():
             st.session_state.chat_history = [
                 (msg["role"], msg["content"]) for msg in doc.to_dict().get("chat_history", [])
             ]
+    
+    # Initialize chat history if empty
+    if "chat_history" not in st.session_state:
+        if st.session_state.user.get("name"):
+            st.session_state.chat_history = [
+                ("assistant", f"Welcome back, {st.session_state.user['name']}! How can I help you today?")
+            ]
+        else:
+            st.session_state.chat_history = [
+                ("assistant", "Hey there! How can I assist you with your international plans?")
+            ]
+    
     show_sidebar()
     chat_interface()
 
