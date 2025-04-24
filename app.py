@@ -75,7 +75,7 @@ def handle_oauth_callback():
         st.error("OAuth login failed."); st.exception(e)
 
 # ─────────────────── UI helpers ────────────────────────────────
-def display_logo():      st.image("Logo_1.png", use_column_width=True)
+def display_logo():      st.image("Logo_1.png", use_container_width=True)
 
 def handle_authentication():
     col1, col2, col3 = st.columns([1, 2, 1])
