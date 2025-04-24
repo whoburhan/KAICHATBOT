@@ -25,7 +25,15 @@ def setup_firebase():
     return firestore.client()
 
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-model = genai.GenerativeModel("gemini-1.5-flash")
+model = genai.GenerativeModel("gemini-1.5-flash", system_instruction="""
+You are KAI, a warm, intelligent, and helpful assistant for international students, scholars, and individuals moving abroad. Your mission is to help users understand:
+- Legal rights and visa regulations.
+- Cultural norms and integration tips.
+- Educational pathways and trending courses.
+- Safety, housing, healthcare, and transportation systems.
+- Practical guidance with compassion and clarity.
+Never act outside this scope. If unsure, ask follow-ups to clarify user context (e.g., visa type, destination, role as student/researcher/tourist). Do NOT respond in third person or repeat processed image inputs. Be empathetic, casual when needed, even humorous or sarcastic if tone permits. Always remember user preferences and keep session coherent.
+""")
 
 BASE_URL = "https://yourkai.streamlit.app"
 
@@ -73,27 +81,26 @@ def display_logo():
     st.image("Logo_1.png", use_container_width=True)
 
 def handle_authentication():
-    st.markdown("<style>body {background-color: #090c10;}</style>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         display_logo()
-        st.markdown("<p style='text-align: center;'>Please sign in or continue as guest to use the chatbot.</p>", unsafe_allow_html=True)
+        st.markdown("<p style='text-align: center;'>Sign in or continue as guest.</p>", unsafe_allow_html=True)
         if st.button("Sign in with Google", key="google_sign_in"):
             st.markdown(f'<meta http-equiv="refresh" content="0; url={get_google_auth_url()}">', unsafe_allow_html=True)
             st.stop()
-        st.markdown("<div style='text-align: center;'>Or</div>", unsafe_allow_html=True)
         if st.button("Continue as Guest"):
             st.session_state.user = {"uid": "guest", "name": None, "email": "", "picture": ""}
-            st.session_state.chat_history = [("assistant", "👋 Hey there! I'm KAI. What should I call you?")]
+            st.session_state.chat_history = [
+                ("assistant", "👋 Hey there! I'm KAI. What should I call you?")
+            ]
             st.session_state.awaiting_name = True
             st.session_state.image_processed = False
-            st.session_state.image_caption = None
             st.rerun()
 
 def show_sidebar():
     with st.sidebar:
         if st.session_state.user.get("picture"):
-            st.markdown(f"<img src='{st.session_state.user['picture']}' style='width:100px; height:100px; border-radius:50%;'>", unsafe_allow_html=True)
+            st.image(st.session_state.user['picture'], width=100)
         else:
             st.image("Logo_1.png", width=100)
         if st.session_state.user.get("name"):
@@ -106,12 +113,9 @@ def show_sidebar():
         if uploaded_file:
             st.session_state.uploaded_file_data = uploaded_file
             st.session_state.image_processed = False
-            st.session_state.image_caption = None
 
 def chat_interface():
     display_logo()
-    st.markdown("<h2 style='margin-top: 0;'>KAI</h2>", unsafe_allow_html=True)
-    st.markdown("<style>[data-testid='stChatMessageContent'] > p {font-size: 1.1rem;}</style>", unsafe_allow_html=True)
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = [("assistant", "Hey there! I'm KAI.")]
     for role, content in st.session_state.chat_history:
@@ -119,18 +123,22 @@ def chat_interface():
     message_input()
 
 def message_input():
-    prompt = st.chat_input("Say Hello or anything you want")
+    prompt = st.chat_input("Say Hello or ask something...")
     if prompt:
         if st.session_state.user["uid"] == "guest" and st.session_state.user.get("name") is None and st.session_state.awaiting_name:
-            name_candidates = prompt.split()
-            if len(name_candidates) == 1 and name_candidates[0].istitle():
-                st.session_state.user["name"] = name_candidates[0]
-                st.session_state.awaiting_name = False
-                st.session_state.chat_history.append(("user", prompt))
+            # Smart name extraction
+            if any(x.lower() in prompt.lower() for x in ["my name is", "i am", "call me"]):
+                words = prompt.replace(",", "").split()
+                for i, word in enumerate(words):
+                    if word.lower() in ["is", "am"] and i + 1 < len(words):
+                        st.session_state.user["name"] = words[i + 1].capitalize()
+                        st.session_state.awaiting_name = False
+                        break
+            st.session_state.chat_history.append(("user", prompt))
+            if st.session_state.user.get("name"):
                 st.session_state.chat_history.append(("assistant", f"Nice to meet you, {st.session_state.user['name']}! How can I help you today?"))
             else:
-                st.session_state.chat_history.append(("user", prompt))
-                st.session_state.chat_history.append(("assistant", "I'd love to know what to call you! Could you tell me your name?"))
+                st.session_state.chat_history.append(("assistant", "Got it! May I know your name so I can address you better?"))
             st.rerun()
         else:
             st.session_state.chat_history.append(("user", prompt))
@@ -138,11 +146,9 @@ def message_input():
 
 def process_user_input(prompt):
     try:
-        image = st.session_state.get("uploaded_file_data", None)
         parts = [prompt]
-
-        if image and not st.session_state.get("image_processed"):
-            img = Image.open(image)
+        if st.session_state.get("uploaded_file_data") and not st.session_state.get("image_processed"):
+            img = Image.open(st.session_state.uploaded_file_data)
             buf = io.BytesIO()
             img.save(buf, format="JPEG")
             image_data = {
@@ -153,28 +159,24 @@ def process_user_input(prompt):
             }
             parts.append(image_data)
             st.session_state.image_processed = True
-            st.session_state.image_caption = image_data  # Cache the image for context
-
-        elif st.session_state.get("image_caption"):
-            parts.append(st.session_state.image_caption)
-
         with st.spinner("KAI is thinking..."):
             res = model.generate_content({"role": "user", "parts": parts})
-            reply = res.text or "Sorry, I didn’t quite get that — wanna rephrase?"
+            reply = res.text or "Sorry, I didn’t quite get that. Mind rephrasing?"
             name = st.session_state.user.get("name")
             if name:
-                reply = reply.replace("you", name).replace(f"{name}r", name)
+                reply = reply.replace("you", name).replace(f"{name}r", name)  # fix third-person
             st.session_state.chat_history.append(("assistant", reply))
-
         if st.session_state.user["uid"] != "guest":
             db = setup_firebase()
             db.collection("users").document(st.session_state.user["uid"]).set({
-                "chat_history": [{"role": r, "content": c} for r, c in st.session_state.chat_history]
+                "chat_history": [
+                    {"role": role, "content": content}
+                    for role, content in st.session_state.chat_history
+                ]
             }, merge=True)
         st.rerun()
-
     except Exception as e:
-        st.session_state.chat_history.append(("assistant", f"Oops, that hit a wall: {e}"))
+        st.session_state.chat_history.append(("assistant", f"Yikes, something broke: {e}"))
         st.rerun()
 
 def main():
@@ -188,7 +190,9 @@ def main():
         db = setup_firebase()
         doc = db.collection("users").document(st.session_state.user["uid"]).get()
         if doc.exists:
-            st.session_state.chat_history = [(msg["role"], msg["content"]) for msg in doc.to_dict().get("chat_history", [])]
+            st.session_state.chat_history = [
+                (msg["role"], msg["content"]) for msg in doc.to_dict().get("chat_history", [])
+            ]
     show_sidebar()
     chat_interface()
 
