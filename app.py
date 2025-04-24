@@ -160,10 +160,14 @@ def process_user_input(prompt):
         )
 
         with st.spinner("KAI is thinking..."):
-            res = model.generate_content([
-                {"role": "system", "parts": [system_prompt]},
-                {"role": "user", "parts": parts}
-            ])
+            res = model.generate_content(
+                messages=[
+                    {"role": "system", "parts": [system_prompt]},
+                    {"role": "user", "parts": parts}
+                ]
+            )
+            reply = res.text or "Sorry, I didn’t quite get that — wanna rephrase?"
+
             reply = res.text or "Sorry, I didn’t quite get that — wanna rephrase?"
             name = st.session_state.user.get("name")
             if name:
