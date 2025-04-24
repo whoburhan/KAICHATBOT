@@ -124,8 +124,7 @@ def message_input():
                 st.session_state.user["name"] = prompt.split()[0].capitalize()
                 st.session_state.awaiting_name = False
                 st.session_state.chat_history.append(("user", prompt))
-                st.session_state.chat_history.append(("assistant", f"Nice to meet you, {st.session_state.user['name']}! Just a quick check: Are you a student, scholar, or traveler? What country are you moving to? What's your visa or immigration status?
-\nThis will help me guide you better."))
+                st.session_state.chat_history.append(("assistant", f"Nice to meet you, {st.session_state.user['name']}! Just a quick check: Are you a student, scholar, or traveler? What country are you moving to? What's your visa or immigration status?\nThis will help me guide you better."))
             else:
                 st.session_state.chat_history.append(("user", prompt))
                 st.session_state.chat_history.append(("assistant", "I'd love to know what to call you! Could you tell me your name?"))
