@@ -29,14 +29,6 @@ model = genai.GenerativeModel("gemini-1.5-flash")
 
 BASE_URL = "https://yourkai.streamlit.app"
 
-# Context tracker for guest image
-if "image_context" not in st.session_state:
-    st.session_state.image_context = None
-
-# Track user name assignment correctly
-if "awaiting_name" not in st.session_state:
-    st.session_state.awaiting_name = False
-
 def get_google_auth_url():
     return (
         f"https://accounts.google.com/o/oauth2/auth?"
@@ -112,7 +104,6 @@ def show_sidebar():
         if uploaded_file:
             st.session_state.uploaded_file_data = uploaded_file
             st.session_state.image_processed = False
-            st.session_state.image_context = None  # Reset context
 
 def chat_interface():
     display_logo()
@@ -127,13 +118,20 @@ def chat_interface():
 def message_input():
     prompt = st.chat_input("Say Hello or anything you want")
     if prompt:
-        # Auto-detect name
         if st.session_state.user["uid"] == "guest" and st.session_state.user.get("name") is None and st.session_state.awaiting_name:
-            if len(prompt.split()) == 1 and prompt[0].isupper():
-                st.session_state.user["name"] = prompt.split()[0].capitalize()
+            lowered = prompt.lower()
+            name = None
+
+            if "my name is" in lowered:
+                name = lowered.split("my name is")[-1].strip().split()[0].capitalize()
+            elif "i am" in lowered or "i'm" in lowered:
+                name = lowered.split("i am" if "i am" in lowered else "i'm")[-1].strip().split()[0].capitalize()
+
+            if name:
+                st.session_state.user["name"] = name
                 st.session_state.awaiting_name = False
                 st.session_state.chat_history.append(("user", prompt))
-                st.session_state.chat_history.append(("assistant", f"Nice to meet you, {st.session_state.user['name']}! How can I help you today?"))
+                st.session_state.chat_history.append(("assistant", f"Nice to meet you, {name}! How can I help you today?"))
             else:
                 st.session_state.chat_history.append(("user", prompt))
                 st.session_state.chat_history.append(("assistant", "I'd love to know what to call you! Could you tell me your name?"))
@@ -146,7 +144,6 @@ def process_user_input(prompt):
     try:
         image = st.session_state.get("uploaded_file_data", None)
         parts = [prompt]
-
         if image and not st.session_state.get("image_processed"):
             img = Image.open(image)
             buf = io.BytesIO()
@@ -158,11 +155,7 @@ def process_user_input(prompt):
                 }
             }
             parts.append(image_data)
-            st.session_state.image_context = image_data
             st.session_state.image_processed = True
-        elif st.session_state.image_context:
-            parts.append(st.session_state.image_context)
-
         with st.spinner("KAI is thinking..."):
             res = model.generate_content({"role": "user", "parts": parts})
             reply = res.text or "Sorry, I didn’t quite get that — wanna rephrase?"
@@ -170,13 +163,11 @@ def process_user_input(prompt):
             if name:
                 reply = reply.replace("you", name)
             st.session_state.chat_history.append(("assistant", reply))
-
         if st.session_state.user["uid"] != "guest":
             db = setup_firebase()
             db.collection("users").document(st.session_state.user["uid"]).set({
                 "chat_history": [{"role": r, "content": c} for r, c in st.session_state.chat_history]
             }, merge=True)
-
         st.rerun()
     except Exception as e:
         st.session_state.chat_history.append(("assistant", f"Oops, that hit a wall: {e}"))
