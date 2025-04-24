@@ -84,7 +84,8 @@ def handle_authentication():
         st.markdown("<div style='text-align: center;'>Or</div>", unsafe_allow_html=True)
         if st.button("Continue as Guest"):
             st.session_state.user = {"uid": "guest", "name": None, "email": "", "picture": ""}
-            st.session_state.chat_history = [("assistant", "👋 Hey there! I'm KAI. What should I call you?")]
+            if "chat_history" not in st.session_state:
+                st.session_state.chat_history = [("assistant", "👋 Hey there! I'm KAI. I'm here to help you navigate life in a new country — from understanding local traditions to getting a grip on visa processes or cultural surprises. What’s on your mind?")]
             st.session_state.awaiting_name = True
             st.session_state.user_profile = {}
             st.rerun()
@@ -111,27 +112,16 @@ def chat_interface():
     st.markdown("<h2 style='margin-top: 0;'>KAI</h2>", unsafe_allow_html=True)
     st.markdown("<style>[data-testid='stChatMessageContent'] > p {font-size: 1.1rem;}</style>", unsafe_allow_html=True)
     if "chat_history" not in st.session_state:
-        st.session_state.chat_history = [("assistant", "Hey there! I'm KAI.")]
+        st.session_state.chat_history = [("assistant", "👋 Hey there! I'm KAI. I'm here to help you navigate life in a new country — from understanding local traditions to getting a grip on visa processes or cultural surprises. What’s on your mind?")]
     for role, content in st.session_state.chat_history:
         st.chat_message(role).write(content)
     message_input()
 
 def message_input():
-    prompt = st.chat_input("Say Hello or anything you want")
+    prompt = st.chat_input("Say Hello or ask anything")
     if prompt:
-        if st.session_state.user["uid"] == "guest" and st.session_state.user.get("name") is None and st.session_state.awaiting_name:
-            if len(prompt.split()) == 1 and len(prompt) < 20 and not any(word in prompt.lower() for word in ["hi", "hello", "hey"]):
-                st.session_state.user["name"] = prompt.split()[0].capitalize()
-                st.session_state.awaiting_name = False
-                st.session_state.chat_history.append(("user", prompt))
-                st.session_state.chat_history.append(("assistant", f"Nice to meet you, {st.session_state.user['name']}! Just a quick check: Are you a student, scholar, or traveler? What country are you moving to? What's your visa or immigration status?\nThis will help me guide you better."))
-            else:
-                st.session_state.chat_history.append(("user", prompt))
-                st.session_state.chat_history.append(("assistant", "I'd love to know what to call you! Could you tell me your name?"))
-            st.rerun()
-        else:
-            st.session_state.chat_history.append(("user", prompt))
-            process_user_input(prompt)
+        st.session_state.chat_history.append(("user", prompt))
+        process_user_input(prompt)
 
 def process_user_input(prompt):
     try:
@@ -153,11 +143,14 @@ def process_user_input(prompt):
         elif st.session_state.get("image_processed"):
             parts = [prompt]
 
-        # Personalization prompt injection
-        if "student" in prompt.lower() or "visa" in prompt.lower() or "immigration" in prompt.lower():
-            user_data = st.session_state.get("user_profile", {})
-            if not user_data:
-                prompt += "\n\nBefore I answer, may I know your visa status, immigration status, and the country you're moving to? I can provide much better help that way."
+        base_prompt = (
+            "You're KAI, an empathetic, witty, and intelligent cultural assistant. You're designed to support international students, scholars, and travelers "
+            "who are moving to or living in a new country. Your goal is to help them understand immigration processes, laws, traditions, university systems, "
+            "and local etiquette in a friendly, non-intimidating way. If they seem confused or uncertain, reassure them. If they're casual, match their tone."
+            "Stay supportive, helpful, and informative without over-assuming. Ask follow-up questions naturally."
+        )
+
+        parts.insert(0, base_prompt)
 
         with st.spinner("KAI is thinking..."):
             res = model.generate_content({"role": "user", "parts": parts})
@@ -166,11 +159,13 @@ def process_user_input(prompt):
             if name:
                 reply = reply.replace("you", name)
             st.session_state.chat_history.append(("assistant", reply))
+
         if st.session_state.user["uid"] != "guest":
             db = setup_firebase()
             db.collection("users").document(st.session_state.user["uid"]).set({
                 "chat_history": [{"role": r, "content": c} for r, c in st.session_state.chat_history]
             }, merge=True)
+
         st.rerun()
     except Exception as e:
         st.session_state.chat_history.append(("assistant", f"Oops, that hit a wall: {e}"))
