@@ -119,7 +119,6 @@ def message_input():
     prompt = st.chat_input("Say Hello or anything you want")
     if prompt:
         if st.session_state.user["uid"] == "guest" and st.session_state.user.get("name") is None and st.session_state.awaiting_name:
-            # Only set name if the message looks like a name (not a greeting)
             if len(prompt.split()) == 1 and len(prompt) < 20 and not any(word in prompt.lower() for word in ["hi", "hello", "hey"]):
                 st.session_state.user["name"] = prompt.split()[0].capitalize()
                 st.session_state.awaiting_name = False
@@ -149,6 +148,9 @@ def process_user_input(prompt):
             }
             parts.append(image_data)
             st.session_state.image_processed = True
+            st.session_state.image_description_cached = image_data  # caching the image once
+        elif st.session_state.get("image_processed"):
+            parts = [prompt]
         with st.spinner("KAI is thinking..."):
             res = model.generate_content({"role": "user", "parts": parts})
             reply = res.text or "Sorry, I didn't quite get that — wanna rephrase?"
