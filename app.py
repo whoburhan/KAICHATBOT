@@ -86,6 +86,8 @@ def handle_authentication():
             st.session_state.user = {"uid": "guest", "name": None, "email": "", "picture": ""}
             st.session_state.chat_history = [("assistant", "👋 Hey there! I'm KAI. What should I call you?")]
             st.session_state.awaiting_name = True
+            st.session_state.image_processed = False
+            st.session_state.image_caption = None
             st.rerun()
 
 def show_sidebar():
@@ -104,6 +106,7 @@ def show_sidebar():
         if uploaded_file:
             st.session_state.uploaded_file_data = uploaded_file
             st.session_state.image_processed = False
+            st.session_state.image_caption = None
 
 def chat_interface():
     display_logo()
@@ -119,19 +122,12 @@ def message_input():
     prompt = st.chat_input("Say Hello or anything you want")
     if prompt:
         if st.session_state.user["uid"] == "guest" and st.session_state.user.get("name") is None and st.session_state.awaiting_name:
-            lowered = prompt.lower()
-            name = None
-
-            if "my name is" in lowered:
-                name = lowered.split("my name is")[-1].strip().split()[0].capitalize()
-            elif "i am" in lowered or "i'm" in lowered:
-                name = lowered.split("i am" if "i am" in lowered else "i'm")[-1].strip().split()[0].capitalize()
-
-            if name:
-                st.session_state.user["name"] = name
+            name_candidates = prompt.split()
+            if len(name_candidates) == 1 and name_candidates[0].istitle():
+                st.session_state.user["name"] = name_candidates[0]
                 st.session_state.awaiting_name = False
                 st.session_state.chat_history.append(("user", prompt))
-                st.session_state.chat_history.append(("assistant", f"Nice to meet you, {name}! How can I help you today?"))
+                st.session_state.chat_history.append(("assistant", f"Nice to meet you, {st.session_state.user['name']}! How can I help you today?"))
             else:
                 st.session_state.chat_history.append(("user", prompt))
                 st.session_state.chat_history.append(("assistant", "I'd love to know what to call you! Could you tell me your name?"))
@@ -144,6 +140,7 @@ def process_user_input(prompt):
     try:
         image = st.session_state.get("uploaded_file_data", None)
         parts = [prompt]
+
         if image and not st.session_state.get("image_processed"):
             img = Image.open(image)
             buf = io.BytesIO()
@@ -156,19 +153,26 @@ def process_user_input(prompt):
             }
             parts.append(image_data)
             st.session_state.image_processed = True
+            st.session_state.image_caption = image_data  # Cache the image for context
+
+        elif st.session_state.get("image_caption"):
+            parts.append(st.session_state.image_caption)
+
         with st.spinner("KAI is thinking..."):
             res = model.generate_content({"role": "user", "parts": parts})
             reply = res.text or "Sorry, I didn’t quite get that — wanna rephrase?"
             name = st.session_state.user.get("name")
             if name:
-                reply = reply.replace("you", name)
+                reply = reply.replace("you", name).replace(f"{name}r", name)
             st.session_state.chat_history.append(("assistant", reply))
+
         if st.session_state.user["uid"] != "guest":
             db = setup_firebase()
             db.collection("users").document(st.session_state.user["uid"]).set({
                 "chat_history": [{"role": r, "content": c} for r, c in st.session_state.chat_history]
             }, merge=True)
         st.rerun()
+
     except Exception as e:
         st.session_state.chat_history.append(("assistant", f"Oops, that hit a wall: {e}"))
         st.rerun()
