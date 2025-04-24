@@ -37,6 +37,12 @@ CORE DOMAINS:
 4. Practical living information (housing, healthcare, transportation, safety)
 5. Financial planning for international relocation
 
+COMMUNICATION RULES:
+- Always address the user in SECOND PERSON (you/your)
+- Never refer to the user in third person (they/their/[name]'s)
+- When you know the user's name, use it naturally in conversation
+  Example: "That's a great question, [name]!" or "[Name], let me explain..."
+
 BOUNDARY ENFORCEMENT:
 - For off-topic queries, assess the user's tone:
   * Playful questions get witty/sarcastic responses matching their style
@@ -44,21 +50,14 @@ BOUNDARY ENFORCEMENT:
   * Clearly state when something is beyond your scope
 
 CONTEXT MANAGEMENT:
-- Remember user details (name, destination country, specific concerns)
+- Remember user details (destination country, specific concerns)
 - Maintain conversation context throughout the session
-- For returning users, recall previous discussions to provide continuity
+- For returning users, recall previous discussions
 
 IMAGE PROCESSING:
 - Analyze images only when first uploaded with accompanying text
 - Extract relevant information (documents, locations, items)
 - Never reprocess the same image unless explicitly requested
-- Focus only on internationally-relevant image content
-
-TONE GUIDELINES:
-- Friendly but professional
-- Adapt to user's communication style
-- Use humor appropriately when user initiates it
-- Address users by name when known
 """
 
 model = genai.GenerativeModel("gemini-1.5-flash", system_instruction=SYSTEM_INSTRUCTION)
@@ -154,9 +153,14 @@ def show_sidebar():
         
         if st.button("Clear Conversation"):
             if st.session_state.user["uid"] == "guest":
-                st.session_state.chat_history = [
-                    ("assistant", f"Conversation cleared. How can I help you today{', ' + st.session_state.user['name'] if st.session_state.user.get('name') else ''}?")
-                ]
+                if st.session_state.user.get("name"):
+                    st.session_state.chat_history = [
+                        ("assistant", f"Conversation cleared. How can I help you today, {st.session_state.user['name']}?")
+                    ]
+                else:
+                    st.session_state.chat_history = [
+                        ("assistant", "Conversation cleared. How can I help you today?")
+                    ]
             else:
                 st.session_state.chat_history = [
                     ("assistant", f"Conversation cleared. How can I help you today, {st.session_state.user['name']}?")
@@ -171,7 +175,7 @@ def show_sidebar():
 def chat_interface():
     display_logo()
     if "chat_history" not in st.session_state:
-        st.session_state.chat_history = [("assistant", "Hey there! I'm KAI.")]
+        st.session_state.chat_history = [("assistant", "Hey there! I'm KAI. How can I help you today?")]
     
     for role, content in st.session_state.chat_history:
         with st.chat_message(role):
@@ -206,9 +210,33 @@ def handle_guest_name(prompt):
         st.session_state.awaiting_name = False
         st.session_state.chat_history.append(("assistant", f"Nice to meet you, {name}! How can I help you with your international plans?"))
     else:
-        st.session_state.chat_history.append(("assistant", "Got it! May I know your name so I can address you better?"))
+        st.session_state.chat_history.append(("assistant", "Got it! May I know what name I should call you?"))
     
     st.rerun()
+
+def fix_pronouns(text, name=None):
+    """Ensure proper second-person addressing"""
+    if not name:
+        return text
+    
+    # Fix common third-person patterns
+    replacements = {
+        f"{name} is": "you are",
+        f"{name}'s": "your",
+        f"{name} has": "you have",
+        f"{name} should": "you should",
+        f"{name} can": "you can",
+        f"{name} will": "you will",
+        f"{name} was": "you were",
+        f"{name} were": "you were",
+        f"{name} needs": "you need",
+        f"{name} wants": "you want"
+    }
+    
+    for wrong, correct in replacements.items():
+        text = text.replace(wrong.lower(), correct)
+    
+    return text
 
 def process_user_input(prompt):
     try:
@@ -222,10 +250,8 @@ def process_user_input(prompt):
         
         Current query: {prompt}
         
-        Instructions:
-        - Respond to the current query while maintaining context
-        - If query is out of scope, respond appropriately based on user tone
-        - For images, only process if new upload exists
+        Important: Always address the user in second person (you/your). 
+        Never use third person references.
         """
         
         parts = [full_prompt]
@@ -253,10 +279,10 @@ def process_user_input(prompt):
             res = model.generate_content({"role": "user", "parts": parts})
             reply = res.text or "Sorry, I didn't quite get that. Could you rephrase your question?"
             
-            # Personalize response if name is available
+            # Ensure proper second-person addressing
             name = st.session_state.user.get("name")
             if name:
-                reply = reply.replace("you", name).replace("your", f"{name}'s").replace(f"{name}r", name)
+                reply = fix_pronouns(reply, name)
             
             st.session_state.chat_history.append(("assistant", reply))
         
@@ -272,7 +298,7 @@ def process_user_input(prompt):
         
         st.rerun()
     except Exception as e:
-        st.session_state.chat_history.append(("assistant", "Sorry, I encountered an error processing your request. Please try again."))
+        st.session_state.chat_history.append(("assistant", "Sorry, I encountered an error. Please try again."))
         st.rerun()
 
 def main():
