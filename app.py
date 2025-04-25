@@ -189,7 +189,7 @@ def process_user_input(prompt:str):
             buf = io.BytesIO(); img.save(buf, format="JPEG")
             image_part = {"inline_data":{"mime_type":"image/jpeg","data":base64.b64encode(buf.getvalue()).decode()}}
             messages.append({"role":"user","parts":[
-                "User just uploaded this image. Analyse it only once and relate it to the current query; do not refer back unless explicitly asked. And check in which language is user asking the question and reply in that language and format only and when they switch language you also switch to that same language."
+                "User just uploaded this image. Analyse it only once and relate it to the current query; do not refer back unless explicitly asked. And check in which language is user asking the question and reply in that language(if the english alphabets are used, you also use english alphabets for their language) only and when they switch language you also switch to that same language."
             ]})
             messages.append({"role":"user","parts":[image_part]})
             st.session_state.image_processed=True
