@@ -1,0 +1,26 @@
+version: "3.9"
+services:
+  kai:
+    build: ./backend
+    ports:
+      - "8501:8501"
+    env_file: .env
+    volumes:
+      - ./backend:/app        # hot-reload during dev
+    depends_on:
+      - firebase
+
+  firebase:
+    image: ghcr.io/firebase/emulator:latest
+    ports:
+      - "4000:4000"
+      - "8080:8080"
+      - "9099:9099"
+    volumes:
+      - ./firebase:/data
+    command: >
+      bash -c "firebase emulators:start
+               --only firestore,auth
+               --project kai-local
+               --import=/data
+               --export-on-exit"
