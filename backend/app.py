@@ -7,6 +7,7 @@ import os, base64, io, json, requests
 from dotenv import load_dotenv
 from PIL import Image
 
+
 load_dotenv()
 
 import firebase_admin

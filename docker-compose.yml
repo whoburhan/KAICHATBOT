@@ -6,21 +6,19 @@ services:
       - "8501:8501"
     env_file: .env
     volumes:
-      - ./backend:/app        # hot-reload during dev
+      - ./backend:/app
     depends_on:
       - firebase
 
   firebase:
-    image: ghcr.io/firebase/emulator:latest
+    image: spine3/firebase-emulator:latest   # ← public image on Docker Hub
+    container_name: firebase
     ports:
-      - "4000:4000"
-      - "8080:8080"
-      - "9099:9099"
+      - "4000:4000"   # Emulator UI
+      - "8080:8080"   # Firestore
+      - "9099:9099"   # Auth
+    environment:
+      - GCP_PROJECT=kai-local               # matches FIREBASE_PROJECT_ID in .env
+      - ENABLE_UI=true                      # nice web console on :4000
     volumes:
-      - ./firebase:/data
-    command: >
-      bash -c "firebase emulators:start
-               --only firestore,auth
-               --project kai-local
-               --import=/data
-               --export-on-exit"
+      - ./firebase:/data                    # persist local data
