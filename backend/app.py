@@ -16,13 +16,23 @@ import google.generativeai as genai
 
 # ─────────────────── Firebase init ─────────────────────────────
 def setup_firebase():
-    try:
-        firebase_admin.get_app()
-    except ValueError:
-        cert_dict = json.loads(os.getenv("FIREBASE_JSON"))
-        cred = credentials.Certificate(cert_dict)
-        firebase_admin.initialize_app(cred)
+    # If we’re talking to the emulator, no creds needed
+    if os.getenv("FIRESTORE_EMULATOR_HOST"):
+        import google.auth.credentials
+        import google.auth
+        creds = google.auth.credentials.AnonymousCredentials()
+        firebase_admin.initialize_app(
+            options={"projectId": os.getenv("FIREBASE_PROJECT_ID", "kai-local")},
+            credentials=creds,
+        )
+        return firestore.client()
+
+    # ---- production / staging path ----
+    cert_dict = json.loads(os.getenv("FIREBASE_JSON"))
+    cred = credentials.Certificate(cert_dict)
+    firebase_admin.initialize_app(cred)
     return firestore.client()
+
 
 # ─────────────────── Gemini config + system prompt ─────────────
 SYSTEM_INSTRUCTION = """
