@@ -1,43 +1,62 @@
 # ───────────────────────────────────────────────────────────────
 # KAI – Streamlit × Gemini × Firebase
-# Last updated: 24-Apr-2025  ▸ fixes greeting-echo + image re-processing
+# Last updated: 27-Apr-2025  • docker-ready + emulator support
 # ───────────────────────────────────────────────────────────────
-import streamlit as st
 import os, base64, io, json, requests
+from pathlib import Path
+
+import streamlit as st
 from dotenv import load_dotenv
 from PIL import Image
-
-
-load_dotenv()
 
 import firebase_admin
 from firebase_admin import credentials, firestore
 import google.generativeai as genai
+import google.auth.credentials             # used for emulator
 
-# ─────────────────── Firebase init ─────────────────────────────
+# ----------------------------------------------------------------
+# 1.  Load local / prod environment variables
+# ----------------------------------------------------------------
+load_dotenv()
+
+# ----------------------------------------------------------------
+# 2.  Firebase initialisation (works for emulator *or* prod)
+# ----------------------------------------------------------------
 def setup_firebase():
-    # If we’re talking to the emulator, no creds needed
-    if os.getenv("FIRESTORE_EMULATOR_HOST"):
-        import google.auth.credentials
-        import google.auth
-        creds = google.auth.credentials.AnonymousCredentials()
-        firebase_admin.initialize_app(
-            options={"projectId": os.getenv("FIREBASE_PROJECT_ID", "kai-local")},
-            credentials=creds,
-        )
-        return firestore.client()
+    """
+    Returns a Firestore client.
+    * If the Firebase SDK is already initialised, it re-uses it.
+    * If EMULATOR env-vars are present, it initialises with anonymous
+      credentials.
+    * Otherwise it expects FIREBASE_JSON (service-account key) to be set.
+    """
+    try:
+        # Re-use existing app if it’s already been set up
+        firebase_admin.get_app()
+    except ValueError:
+        # No app yet → initialise
+        if os.getenv("FIRESTORE_EMULATOR_HOST"):         # ← local dev
+            anon_creds = google.auth.credentials.AnonymousCredentials()
+            firebase_admin.initialize_app(
+                credential=anon_creds,
+                options={"projectId": os.getenv("FIREBASE_PROJECT_ID", "kai-local")},
+            )
+        else:                                            # ← production / staging
+            key_json = os.getenv("FIREBASE_JSON")
+            if not key_json:
+                raise RuntimeError("FIREBASE_JSON is missing.")
+            cert_dict = json.loads(key_json)
+            cred = credentials.Certificate(cert_dict)
+            firebase_admin.initialize_app(cred)
 
-    # ---- production / staging path ----
-    cert_dict = json.loads(os.getenv("FIREBASE_JSON"))
-    cred = credentials.Certificate(cert_dict)
-    firebase_admin.initialize_app(cred)
     return firestore.client()
 
-
-# ─────────────────── Gemini config + system prompt ─────────────
+# ----------------------------------------------------------------
+# 3.  Gemini configuration
+# ----------------------------------------------------------------
 SYSTEM_INSTRUCTION = """
 You are KAI, a specialized assistant for international students, scholars, and expatriates.
-<… same content you pasted …>
+(Core prompt text unchanged) …
 """
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 model = genai.GenerativeModel(
@@ -45,8 +64,10 @@ model = genai.GenerativeModel(
     system_instruction=SYSTEM_INSTRUCTION
 )
 
-# ─────────────────── OAuth helpers ─────────────────────────────
-BASE_URL = "https://yourkai.streamlit.app"
+# ----------------------------------------------------------------
+# 4.  Google OAuth helpers
+# ----------------------------------------------------------------
+BASE_URL = "https://yourkai.streamlit.app"   # adjust when deployed
 
 def get_google_auth_url():
     return (
@@ -85,7 +106,9 @@ def handle_oauth_callback():
     except Exception as e:
         st.error("OAuth login failed."); st.exception(e)
 
-# ─────────────────── UI helpers ────────────────────────────────
+# ----------------------------------------------------------------
+# 5.  UI helpers (logo, sidebar, chat input, etc.)
+# ----------------------------------------------------------------
 def display_logo():      st.image("Logo_1.png", use_container_width=True)
 
 def handle_authentication():
@@ -108,8 +131,7 @@ def enforce_boundaries(prompt:str)->bool:
     core_topics = ["visa","immigration","legal","culture","tradition","education",
                    "university","admission","housing","healthcare","transport","safety",
                    "financial","cost of living","abroad","international","relocation","moving"]
-    pl = prompt.lower()
-    return any(t in pl for t in core_topics)
+    return any(t in prompt.lower() for t in core_topics)
 
 def show_sidebar():
     with st.sidebar:
@@ -168,7 +190,9 @@ def handle_guest_name(prompt:str):
         st.session_state.chat_history.append(("assistant","Got it! May I know what name I should call you?"))
     st.rerun()
 
-# ─────────────────── pronoun fixer ─────────────────────────────
+# ----------------------------------------------------------------
+# 6.  Pronoun fixer & helpers
+# ----------------------------------------------------------------
 def fix_pronouns(text:str, name:str)->str:
     if not name: return text
     repl = {
@@ -181,14 +205,15 @@ def fix_pronouns(text:str, name:str)->str:
         text = text.replace(wrong.lower(), right)
     return text
 
-# ─────────────────── NEW: role-map helper ──────────────────────
 def map_role(role:str)->str:
     return "user" if role=="user" else "model"   # gemini calls assistant "model"
 
-# ─────────────────── main inference routine ───────────────────
+# ----------------------------------------------------------------
+# 7.  Main inference routine
+# ----------------------------------------------------------------
 def process_user_input(prompt:str):
     try:
-        # ---- build structured Gemini message list (no echo of greetings) ----
+        # ---- build structured Gemini message list (context window) ----------
         messages=[]
         for role, content in st.session_state.chat_history[-6:]:
             messages.append({"role": map_role(role), "parts":[content]})
@@ -228,24 +253,29 @@ def process_user_input(prompt:str):
         st.session_state.chat_history.append(("assistant","Sorry, I encountered an error. Please try again."))
         st.rerun()
 
-# ─────────────────── Streamlit page bootstrap ─────────────────
+# ----------------------------------------------------------------
+# 8.  Streamlit page bootstrap
+# ----------------------------------------------------------------
 def main():
     st.set_page_config(page_title="KAI – Your International Assistant", page_icon="🌍")
     setup_firebase()
 
+    # OAuth redirect
     if "code" in st.query_params and "user" not in st.session_state:
         handle_oauth_callback()
 
+    # First-visit authentication
     if "user" not in st.session_state:
         handle_authentication(); return
 
-    # load chat history for signed-in users
+    # Load chat history for signed-in users
     if st.session_state.user["uid"]!="guest" and "chat_history" not in st.session_state:
         db = setup_firebase()
         doc = db.collection("users").document(st.session_state.user["uid"]).get()
         if doc.exists:
             st.session_state.chat_history=[(m["role"], m["content"]) for m in doc.to_dict().get("chat_history",[])]
 
+    # Initialise chat for first-time visitors
     if "chat_history" not in st.session_state:
         if st.session_state.user.get("name"):
             st.session_state.chat_history=[("assistant",f"Welcome back, {st.session_state.user['name']}! How can I help today?")]
