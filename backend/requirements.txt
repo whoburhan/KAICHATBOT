@@ -4,3 +4,4 @@ google-generativeai
 python-dotenv
 requests
 Pillow
+openai>=1.14.3

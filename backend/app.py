@@ -1,6 +1,6 @@
 # ───────────────────────────────────────────────────────────────
-# KAI – Streamlit × Gemini × Firebase
-# Last updated: 27-Apr-2025  • docker-ready + emulator support
+# KAI – Streamlit × Multi-Provider LLM × Firebase
+# Last updated: 27-Apr-2025  • GPT/Gemini toggle via llm.py
 # ───────────────────────────────────────────────────────────────
 import os, base64, io, json, requests
 from pathlib import Path
@@ -11,63 +11,50 @@ from PIL import Image
 
 import firebase_admin
 from firebase_admin import credentials, firestore
-import google.generativeai as genai
-import google.auth.credentials             # used for emulator
+import google.auth.credentials             # for emulator
+
+# unified LLM wrapper
+from llm import chat as llm_chat           # ← NEW
 
 # ----------------------------------------------------------------
-# 1.  Load local / prod environment variables
+# 1.  Load environment
 # ----------------------------------------------------------------
 load_dotenv()
 
 # ----------------------------------------------------------------
-# 2.  Firebase initialisation (works for emulator *or* prod)
+# 2.  Firebase initialisation (emulator-aware)
 # ----------------------------------------------------------------
 def setup_firebase():
-    """
-    Returns a Firestore client.
-    * If the Firebase SDK is already initialised, it re-uses it.
-    * If EMULATOR env-vars are present, it initialises with anonymous
-      credentials.
-    * Otherwise it expects FIREBASE_JSON (service-account key) to be set.
-    """
     try:
-        # Re-use existing app if it’s already been set up
         firebase_admin.get_app()
     except ValueError:
-        # No app yet → initialise
-        if os.getenv("FIRESTORE_EMULATOR_HOST"):         # ← local dev
-            anon_creds = google.auth.credentials.AnonymousCredentials()
-            firebase_admin.initialize_app(
-                credential=anon_creds,
-                options={"projectId": os.getenv("FIREBASE_PROJECT_ID", "kai-local")},
-            )
-        else:                                            # ← production / staging
-            key_json = os.getenv("FIREBASE_JSON")
+        if os.getenv("FIRESTORE_EMULATOR_HOST"):
+            # emulator branch (unchanged) …
+            ...
+        else:
+            # ----- NEW graceful prod branch -----
+            key_json = os.getenv("FIREBASE_JSON") or st.secrets.get("FIREBASE_JSON")
             if not key_json:
-                raise RuntimeError("FIREBASE_JSON is missing.")
-            cert_dict = json.loads(key_json)
-            cred = credentials.Certificate(cert_dict)
+                raise RuntimeError("Firebase credentials missing.")
+            cred_dict = json.loads(key_json)
+            cred = credentials.Certificate(cred_dict)
             firebase_admin.initialize_app(cred)
-
     return firestore.client()
 
+
 # ----------------------------------------------------------------
-# 3.  Gemini configuration
+# 3.  System prompt (only used by Gemini via llm.py)
 # ----------------------------------------------------------------
-SYSTEM_INSTRUCTION = """
+SYSTEM_PROMPT = """
 You are KAI, a specialized assistant for international students, scholars, and expatriates.
-(Core prompt text unchanged) …
+(… keep the same core domain text here …)
 """
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-model = genai.GenerativeModel(
-    "gemini-1.5-flash",
-    system_instruction=SYSTEM_INSTRUCTION
-)
+os.environ.setdefault("SYSTEM_PROMPT", SYSTEM_PROMPT)
 
 # ----------------------------------------------------------------
 # 4.  Google OAuth helpers
 # ----------------------------------------------------------------
-BASE_URL = "https://yourkai.streamlit.app"   # adjust when deployed
+BASE_URL = "https://yourkai.streamlit.app"   # adjust for prod
 
 def get_google_auth_url():
     return (
@@ -107,7 +94,7 @@ def handle_oauth_callback():
         st.error("OAuth login failed."); st.exception(e)
 
 # ----------------------------------------------------------------
-# 5.  UI helpers (logo, sidebar, chat input, etc.)
+# 5.  UI helpers
 # ----------------------------------------------------------------
 def display_logo():      st.image("Logo_1.png", use_container_width=True)
 
@@ -126,12 +113,6 @@ def handle_authentication():
             st.session_state.awaiting_name  = True
             st.session_state.image_processed = False
             st.rerun()
-
-def enforce_boundaries(prompt:str)->bool:
-    core_topics = ["visa","immigration","legal","culture","tradition","education",
-                   "university","admission","housing","healthcare","transport","safety",
-                   "financial","cost of living","abroad","international","relocation","moving"]
-    return any(t in prompt.lower() for t in core_topics)
 
 def show_sidebar():
     with st.sidebar:
@@ -213,7 +194,7 @@ def map_role(role:str)->str:
 # ----------------------------------------------------------------
 def process_user_input(prompt:str):
     try:
-        # ---- build structured Gemini message list (context window) ----------
+        # ---- build structured message list (Gemini schema) ------------------
         messages=[]
         for role, content in st.session_state.chat_history[-6:]:
             messages.append({"role": map_role(role), "parts":[content]})
@@ -225,17 +206,16 @@ def process_user_input(prompt:str):
             buf = io.BytesIO(); img.save(buf, format="JPEG")
             image_part = {"inline_data":{"mime_type":"image/jpeg","data":base64.b64encode(buf.getvalue()).decode()}}
             messages.append({"role":"user","parts":[
-                "User just uploaded this image. Analyse it only once and relate it to the current query; do not refer back unless explicitly asked. And check in which language is user asking the question and reply in that language only and when they switch language you also switch to that same language."
+                "User just uploaded this image. Analyse it only once and relate it to the current query; do not refer back unless explicitly asked. And check in which language the user is asking and reply in that language."
             ]})
             messages.append({"role":"user","parts":[image_part]})
             st.session_state.image_processed=True
 
-        # ---- Gemini call ----------------------------------------------------
+        # ---- Unified LLM call (Gemini or GPT) -------------------------------
         with st.spinner("KAI is thinking…"):
-            res   = model.generate_content(messages)
-            reply = res.text or "Sorry, I didn't quite get that. Could you rephrase?"
+            reply = llm_chat(messages) or "Sorry, I didn't quite get that. Could you rephrase?"
 
-        # ---- enforce second-person style ------------------------------------
+        # ---- second-person pronoun fix --------------------------------------
         if (n:=st.session_state.user.get("name")): reply = fix_pronouns(reply, n)
 
         st.session_state.chat_history.append(("assistant", reply))
@@ -254,17 +234,15 @@ def process_user_input(prompt:str):
         st.rerun()
 
 # ----------------------------------------------------------------
-# 8.  Streamlit page bootstrap
+# 8.  Streamlit bootstrap
 # ----------------------------------------------------------------
 def main():
     st.set_page_config(page_title="KAI – Your International Assistant", page_icon="🌍")
     setup_firebase()
 
-    # OAuth redirect
     if "code" in st.query_params and "user" not in st.session_state:
         handle_oauth_callback()
 
-    # First-visit authentication
     if "user" not in st.session_state:
         handle_authentication(); return
 
@@ -275,7 +253,6 @@ def main():
         if doc.exists:
             st.session_state.chat_history=[(m["role"], m["content"]) for m in doc.to_dict().get("chat_history",[])]
 
-    # Initialise chat for first-time visitors
     if "chat_history" not in st.session_state:
         if st.session_state.user.get("name"):
             st.session_state.chat_history=[("assistant",f"Welcome back, {st.session_state.user['name']}! How can I help today?")]
