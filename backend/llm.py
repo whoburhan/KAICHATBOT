@@ -1,17 +1,20 @@
-# KAICHABOT/backend/llm.py
-import os, openai
+# backend/llm.py  – GPT-only, SDK ≥ 1.0
+import os
+from openai import OpenAI, OpenAIError
 
-openai.api_key = os.getenv("GPT_API_KEY")
 GPT_MODEL   = os.getenv("GPT_MODEL", "gpt-4o-mini")
-TEMPERATURE = float(os.getenv("GPT_TEMPERATURE", "0.7"))  # 0-1
+TEMPERATURE = float(os.getenv("GPT_TEMPERATURE", "0.7"))
+
+client = OpenAI(api_key=os.getenv("GPT_API_KEY"))
 
 def chat(messages: list[dict]) -> str:
     """
-    messages in Gemini-style:
-      {"role":"user"|"assistant","parts":[text]}
-    returns assistant reply string.
+    Args:
+        messages (list): [{"role":"user"|"assistant","parts":[text]}, …]
+    Returns:
+        str: assistant reply
     """
-    # Convert to OpenAI schema
+    # convert Gemini-style schema ➜ OpenAI
     oai_msgs = [
         {
             "role": "assistant" if m["role"] in ("assistant", "model") else "user",
@@ -20,9 +23,13 @@ def chat(messages: list[dict]) -> str:
         for m in messages
     ]
 
-    resp = openai.ChatCompletion.create(
-        model=GPT_MODEL,
-        messages=oai_msgs,
-        temperature=TEMPERATURE,
-    )
-    return resp.choices[0].message.content.strip()
+    try:
+        resp = client.chat.completions.create(
+            model=GPT_MODEL,
+            messages=oai_msgs,
+            temperature=TEMPERATURE,
+        )
+        return resp.choices[0].message.content.strip()
+    except OpenAIError as e:
+        # bubble up – FastAPI will wrap into HTTP 500
+        raise RuntimeError(str(e)) from e
