@@ -1,44 +1,28 @@
-import os
-import google.generativeai as genai
-import openai
+# KAICHABOT/backend/llm.py
+import os, openai
 
-# ───────── env ─────────
-PROVIDER = os.getenv("LLM_PROVIDER", "gemini").lower()
+openai.api_key = os.getenv("GPT_API_KEY")
+GPT_MODEL   = os.getenv("GPT_MODEL", "gpt-4o-mini")
+TEMPERATURE = float(os.getenv("GPT_TEMPERATURE", "0.7"))  # 0-1
 
-# ───────── init ────────
-if PROVIDER == "gemini":
-    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-    gemini_model = genai.GenerativeModel(
-        os.getenv("GEMINI_MODEL", "gemini-1.5-flash"),
-        system_instruction=os.getenv("SYSTEM_PROMPT", "")
-    )
-
-elif PROVIDER == "gpt":
-    openai.api_key = os.getenv("GPT_API_KEY")
-
-else:
-    raise ValueError(f"Unsupported LLM_PROVIDER '{PROVIDER}'")
-
-# ───────── unified chat ────────
 def chat(messages: list[dict]) -> str:
     """
-    Input  (Gemini style):
-        [{"role":"user","parts":[text]}, …]
-    Output: assistant string
+    messages in Gemini-style:
+      {"role":"user"|"assistant","parts":[text]}
+    returns assistant reply string.
     """
-    if PROVIDER == "gemini":
-        resp = gemini_model.generate_content(messages)
-        return resp.text
-
-    # -- GPT path : convert message schema --
-    oai_msgs = []
-    for m in messages:
-        role = "assistant" if m["role"] in ("assistant", "model") else "user"
-        oai_msgs.append({"role": role, "content": "\n".join(m["parts"])})
+    # Convert to OpenAI schema
+    oai_msgs = [
+        {
+            "role": "assistant" if m["role"] in ("assistant", "model") else "user",
+            "content": "\n".join(m["parts"]),
+        }
+        for m in messages
+    ]
 
     resp = openai.ChatCompletion.create(
-        model=os.getenv("GPT_MODEL", "gpt-4o-mini"),
+        model=GPT_MODEL,
         messages=oai_msgs,
-        temperature=0.7,
+        temperature=TEMPERATURE,
     )
-    return resp.choices[0].message.content
+    return resp.choices[0].message.content.strip()

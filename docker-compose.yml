@@ -1,24 +1,19 @@
 version: "3.9"
+
 services:
-  kai:
+  kai-backend:
     build: ./backend
-    ports:
-      - "8501:8501"
     env_file: .env
-    volumes:
-      - ./backend:/app
-    depends_on:
-      - firebase
+    ports: ["8000:8000"]
+    depends_on: [firebase]
 
   firebase:
-    image: spine3/firebase-emulator:latest   # ← public image on Docker Hub
-    container_name: firebase
+    image: spine3/firebase-emulator:latest
+    environment: [GCP_PROJECT=kai-local, ENABLE_UI=true]
     ports:
-      - "4000:4000"   # Emulator UI
       - "8080:8080"   # Firestore
       - "9099:9099"   # Auth
-    environment:
-      - GCP_PROJECT=kai-local               # matches FIREBASE_PROJECT_ID in .env
-      - ENABLE_UI=true                      # nice web console on :4000
-    volumes:
-      - ./firebase:/data                    # persist local data
+      - "4000:4000"   # Emulator UI
+    volumes: ["./firebase:/data"]
+
+  # (Frontend to be added later)

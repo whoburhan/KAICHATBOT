@@ -1,7 +1,6 @@
-streamlit
-firebase-admin
-google-generativeai
-python-dotenv
-requests
-Pillow
+fastapi>=0.110
+uvicorn[standard]
 openai>=1.14.3
+firebase-admin
+python-dotenv
+pillow
