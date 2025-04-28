@@ -1,0 +1,6 @@
+fastapi>=0.110
+uvicorn[standard]
+openai>=1.14.3
+firebase-admin
+python-dotenv
+pillow
