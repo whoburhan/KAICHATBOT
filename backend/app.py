@@ -35,7 +35,7 @@ def setup_firebase():
             # ----- NEW graceful prod branch -----
             key_json = os.getenv("FIREBASE_JSON") or st.secrets.get("FIREBASE_JSON")
             if not key_json:
-                raise RuntimeError("Firebase credentials missing.")
+                raise RuntimeError("Firebase credentials missing: set FIREBASE_JSON env-var or st.secrets")
             cred_dict = json.loads(key_json)
             cred = credentials.Certificate(cred_dict)
             firebase_admin.initialize_app(cred)
