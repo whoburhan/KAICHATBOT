@@ -1,2 +1,6 @@
 .env
 firebase_key.json
+kai-ui/node_modules/
+.env.local
+*.pem
+.DS_Store
